@@ -1,5 +1,8 @@
 # Epmd-less erlang distribution #
 
+### Requirements ###
+* Erlang >= 19.1
+
 ### App configuration ###
 
 ```
