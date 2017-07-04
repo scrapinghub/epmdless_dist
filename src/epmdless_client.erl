@@ -43,8 +43,12 @@ register_node(Name, Port, _Family) ->
 %% @end
 port_please(Name, Ip) ->
     case gen_server:call(?MODULE, {port_please, Name, Ip}, infinity) of
-        {ok, Port}      -> {port, Port, 5};
-        {error, noport} -> noport
+        {ok, Port} ->
+            error_logger:info_msg("Resolved port for ~p/~p to ~p~n", [Name, Ip, Port]),
+            {port, Port, 5};
+        {error, noport} ->
+            error_logger:info_msg("No port for ~p/~p~n", [Name, Ip]),
+            noport
     end.
 
 
