@@ -1,0 +1,7 @@
+*.beam
+*.swp
+*.swo
+ebin/
+epmdless_dist.d
+certs
+.erlang.mk/
