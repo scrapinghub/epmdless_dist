@@ -5,6 +5,8 @@ PROJECT_VERSION = 0.0.1
 DEVEL_NODENAME ?= "epmdless_devel"
 PORT ?= 7113
 
+compile: all
+
 devel: all
 	ERL_LIBS=$$ERL_LIBS:ebin/ erl -pa ebin \
 			 -boot start_sasl \
