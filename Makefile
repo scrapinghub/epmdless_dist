@@ -1,6 +1,6 @@
 PROJECT = epmdless_dist
 PROJECT_DESCRIPTION = crypted epmd-less erlang distribution with tls based authentication
-PROJECT_VERSION = 0.0.1
+PROJECT_VERSION = 0.0.2
 
 DEVEL_NODENAME ?= "epmdless_devel"
 PORT ?= 7113
