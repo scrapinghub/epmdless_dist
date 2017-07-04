@@ -5,3 +5,4 @@ ebin/
 epmdless_dist.d
 certs
 .erlang.mk/
+erl_crash.dump
