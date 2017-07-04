@@ -33,8 +33,10 @@
 -include_lib("kernel/include/dist_util.hrl").
 
 childspecs() ->
-    {ok, [{ssl_dist_sup,{ssl_dist_sup, start_link, []},
-	   permanent, infinity, supervisor, [ssl_dist_sup]}]}.
+    {ok, [{
+       epmdless_tls_dist_proxy, {epmdless_tls_dist_proxy, start_link, []},
+	   permanent, infinity, worker, [epmdless_tls_dist_proxy]
+    }]}.
 
 select(Node) ->
     gen_select(inet_tcp, Node).
@@ -95,11 +97,13 @@ do_setup(Driver, Kernel, Node, Type, MyNode, LongOrShortNames, SetupTime) ->
 		    dist_util:reset_timer(Timer),
 		    case epmdless_tls_dist_proxy:connect(Driver, Ip, TcpPort) of
 			{ok, Socket} ->
+                error_logger:info_msg("Connected to ~p~n", [{Ip, TcpPort}]),
 			    HSData = connect_hs_data(Kernel, Node, MyNode, Socket, 
 						     Timer, Version, Ip, TcpPort, Address,
 						     Type),
 			    dist_util:handshake_we_started(HSData);
 			Other ->
+                error_logger:error_msg("Failed to connect to ~p with ~p~n", [{Ip, TcpPort}, Other]),
 			    %% Other Node may have closed since 
 			    %% port_please !
 			    ?trace("other node (~p) "
