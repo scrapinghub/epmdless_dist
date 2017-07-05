@@ -53,5 +53,5 @@ get_module() ->
     application:load(epmdless_dist),
     case application:get_env(epmdless_dist, transport) of
         {ok, tls} -> epmdless_tls_dist;
-        _         -> inet_tcp_dist
+        _         -> epmdless_tcp_dist
     end.

@@ -1,6 +1,6 @@
 -module(epmdless_dist).
 
--export([add_node/2]).
+-export([add_node/2, add_node/3]).
 -export([remove_node/1]).
 -export([list_nodes/0]).
 -export([set_nodes/1]).
@@ -12,6 +12,13 @@
 add_node(Node, Port) ->
     epmdless_client:add_node(Node, Port).
 
+
+-spec add_node(Node, Host, Port) -> ok when
+      Node :: atom(),
+      Host :: inet:hostname() | inet:ip_address(),
+      Port :: inet:port_number().
+add_node(Node, Host, Port) ->
+    epmdless_client:add_node(Node, Host, Port).
 
 
 -spec remove_node(Node) -> ok when

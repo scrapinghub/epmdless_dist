@@ -5,11 +5,11 @@
 %% @end
 
 %% epmd callbacks
--export([start_link/0, register_node/3, port_please/2, names/1]).
+-export([start_link/0, register_node/3, host_please/1, port_please/2, names/1]).
 %% gen server callbacks
 -export([init/1, handle_info/2, handle_cast/2, handle_call/3, terminate/2, code_change/3]).
 %% auxiliary  API
--export([add_node/2, remove_node/1, list_nodes/0]).
+-export([add_node/2, add_node/3, remove_node/1, list_nodes/0]).
 
 -record(state, {
     nodes = #{} :: map()
@@ -33,21 +33,35 @@ register_node(Name, Port, _Family) ->
     {ok, rand:uniform(3)}.
 
 
--spec port_please(Name, Ip) -> {port, Port, Version} | noport when
+-spec host_please(Node) -> {host, Host} | nohost when
+      Node :: atom(),
+      Host :: inet:hostname() | inet:ip_address().
+host_please(Node) ->
+    case gen_server:call(?MODULE, {host_please, Node}, infinity) of
+        {error, nohost} -> 
+            error_logger:info_msg("No host found for node ~p~n", [Node]),
+            nohost;
+        {ok, Host} -> 
+            error_logger:info_msg("Found host ~p for node ~p~n", [Host, Node]),
+            {host, Host}
+    end.
+
+
+-spec port_please(Name, Host) -> {port, Port, Version} | noport when
       Name    :: atom(),
-      Ip      :: inet:address(),
+      Host    :: inet:hostname(),
       Port    :: inet:port_number(),
       Version :: 5.
 %% @doc
 %% request port of node `Name` 
 %% @end
-port_please(Name, Ip) ->
-    case gen_server:call(?MODULE, {port_please, Name, Ip}, infinity) of
+port_please(Name, Host) ->
+    case gen_server:call(?MODULE, {port_please, Name, Host}, infinity) of
         {ok, Port} ->
-            error_logger:info_msg("Resolved port for ~p/~p to ~p~n", [Name, Ip, Port]),
+            error_logger:info_msg("Resolved port for ~p/~p to ~p~n", [Name, Host, Port]),
             {port, Port, 5};
         {error, noport} ->
-            error_logger:info_msg("No port for ~p/~p~n", [Name, Ip]),
+            error_logger:info_msg("No port for ~p/~p~n", [Name, Host]),
             noport
     end.
 
@@ -56,7 +70,19 @@ port_please(Name, Ip) ->
       Node :: atom(),
       Port :: inet:port_number().
 add_node(Node, Port) ->
-    ok = gen_server:call(?MODULE, {add_node, Node, Port}, infinity).
+    Host = case string:split(atom_to_list(Node), "@") of
+        [_Node, H] -> H;
+        [H]        -> H
+    end,
+    add_node(Node, Host, Port).
+
+
+-spec add_node(Node, Host, Port) -> ok when
+      Node :: atom(),
+      Host :: inet:hostname() | inet:ip_address(),
+      Port :: inet:port_number().
+add_node(Node, Host, Port) ->
+    ok = gen_server:call(?MODULE, {add_node, Node, Host, Port}, infinity).
 
 
 -spec list_nodes() -> [{Node, Port}] when
@@ -97,16 +123,23 @@ handle_cast(Msg, State) ->
 handle_call(list_nodes, _From, State) ->
     {reply, State#state.nodes, State};
 
-handle_call({add_node, Node, Port}, _From, State) ->
-    {reply, ok, State#state{nodes = maps:put(Node, Port, State#state.nodes)}};
+handle_call({add_node, Node, Host, Port}, _From, State) ->
+    {reply, ok, State#state{nodes = maps:put(Node, {Host, Port}, State#state.nodes)}};
 
 handle_call({remove_node, Node}, _From, State) ->
     {reply, ok, State#state{nodes = maps:remove(Node, State#state.nodes)}};
 
-handle_call({port_please, Node, Ip}, _From, State) ->
-    Reply = case maps:find(node_ip_to_name(Node, Ip), State#state.nodes) of
-        error   -> {error, noport};
-        {ok, P} -> {ok, P}
+handle_call({host_please, Node}, _From, State) ->
+    Reply = case maps:find(Node, State#state.nodes) of
+        error -> {error, nohost};
+        {ok, {H, _P}} -> {ok, H}
+    end,
+    {reply, Reply, State};
+
+handle_call({port_please, Node, Host}, _From, State) ->
+    Reply = case maps:find(node_host_to_name(Node, Host), State#state.nodes) of
+        error -> {error, noport};
+        {ok, {_H, P}} -> {ok, P}
     end,
     {reply, Reply, State};
 
@@ -126,9 +159,9 @@ code_change(_Old, State, _Extra) ->
 %% internal funcs
 
 
--spec node_ip_to_name(Node, Ip) -> Name when
+-spec node_host_to_name(Node, Host) -> Name when
       Node :: atom(),
-      Ip   :: term(),
+      Host :: inet:hostname(),
       Name :: atom().
-node_ip_to_name(Node, Ip) ->
-    list_to_atom(lists:flatten(io_lib:format("~s@~s", [Node, inet:ntoa(Ip)]))).
+node_host_to_name(Node, Host) ->
+    list_to_atom(lists:flatten(io_lib:format("~s@~s", [Node, Host]))).

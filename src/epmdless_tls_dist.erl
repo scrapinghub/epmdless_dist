@@ -85,41 +85,45 @@ gen_setup(Driver, Node, Type, MyNode, LongOrShortNames,SetupTime) ->
     spawn_opt(fun() -> do_setup(Driver, Kernel, Node, Type, MyNode, LongOrShortNames, SetupTime) end, [link, {priority, max}]).
 		   
 do_setup(Driver, Kernel, Node, Type, MyNode, LongOrShortNames, SetupTime) ->
-    [Name, Address] = splitnode(Driver, Node, LongOrShortNames),
+    [Name, RawAddress] = splitnode(Driver, Node, LongOrShortNames),
+    ErlEpmd = net_kernel:epmd_module(),
+    Address = case ErlEpmd:host_please(Node) of
+        nohost -> RawAddress;
+        {host, H} -> H
+    end,
     case inet:getaddr(Address, Driver:family()) of
-	{ok, Ip} ->
-	    Timer = dist_util:start_timer(SetupTime),
-	    ErlEpmd = net_kernel:epmd_module(),
-	    case ErlEpmd:port_please(Name, Ip) of
-		{port, TcpPort, Version} ->
-		    ?trace("port_please(~p) -> version ~p~n", 
-			   [Node,Version]),
-		    dist_util:reset_timer(Timer),
-		    case epmdless_tls_dist_proxy:connect(Driver, Ip, TcpPort) of
-			{ok, Socket} ->
-                error_logger:info_msg("Connected to ~p~n", [{Ip, TcpPort}]),
-			    HSData = connect_hs_data(Kernel, Node, MyNode, Socket, 
-						     Timer, Version, Ip, TcpPort, Address,
-						     Type),
-			    dist_util:handshake_we_started(HSData);
-			Other ->
-                error_logger:error_msg("Failed to connect to ~p with ~p~n", [{Ip, TcpPort}, Other]),
-			    %% Other Node may have closed since 
-			    %% port_please !
-			    ?trace("other node (~p) "
-				   "closed since port_please.~n", 
-				   [Node]),
-			    ?shutdown2(Node, {shutdown, {connect_failed, Other}})
-		    end;
-		Other ->
-		    ?trace("port_please (~p) "
-			   "failed.~n", [Node]),
-		    ?shutdown2(Node, {shutdown, {port_please_failed, Other}})
-	    end;
-	Other ->
-	    ?trace("inet_getaddr(~p) "
-		   "failed (~p).~n", [Node,Other]),
-	    ?shutdown2(Node, {shutdown, {inet_getaddr_failed, Other}})
+        {ok, Ip} ->
+            Timer = dist_util:start_timer(SetupTime),
+            case ErlEpmd:port_please(Name, RawAddress) of
+                {port, TcpPort, Version} ->
+                    ?trace("port_please(~p) -> version ~p~n", 
+                           [Node,Version]),
+                    dist_util:reset_timer(Timer),
+                    case epmdless_tls_dist_proxy:connect(Driver, Ip, TcpPort) of
+                        {ok, Socket} ->
+                            error_logger:info_msg("Connected to ~p~n", [{Ip, TcpPort}]),
+                            HSData = connect_hs_data(Kernel, Node, MyNode, Socket, 
+                                                     Timer, Version, Ip, TcpPort, RawAddress,
+                                                     Type),
+                            dist_util:handshake_we_started(HSData);
+                        Other ->
+                            error_logger:error_msg("Failed to connect to ~p with ~p~n", [{Ip, TcpPort}, Other]),
+                            %% Other Node may have closed since 
+                            %% port_please !
+                            ?trace("other node (~p) "
+                                   "closed since port_please.~n", 
+                                   [Node]),
+                            ?shutdown2(Node, {shutdown, {connect_failed, Other}})
+                    end;
+                Other ->
+                    ?trace("port_please (~p) "
+                           "failed.~n", [Node]),
+                    ?shutdown2(Node, {shutdown, {port_please_failed, Other}})
+            end;
+        Other ->
+            ?trace("inet_getaddr(~p) "
+                   "failed (~p).~n", [Node,Other]),
+            ?shutdown2(Node, {shutdown, {inet_getaddr_failed, Other}})
     end.
 
 close(Socket) ->
