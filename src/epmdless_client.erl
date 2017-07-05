@@ -70,7 +70,7 @@ port_please(Name, Host) ->
       Node :: atom(),
       Port :: inet:port_number().
 add_node(Node, Port) ->
-    Host = case string:split(atom_to_list(Node), "@") of
+    Host = case string:tokens(atom_to_list(Node), "@") of
         [_Node, H] -> H;
         [H]        -> H
     end,
