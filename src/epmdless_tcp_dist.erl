@@ -185,47 +185,40 @@ do_accept(Driver, Kernel, AcceptPid, Socket, MyNode, Allowed, SetupTime) ->
     receive
 	{AcceptPid, controller} ->
 	    Timer = dist_util:start_timer(SetupTime),
-	    case check_ip(Driver, Socket) of
-		true ->
-		    HSData = #hs_data{
-		      kernel_pid = Kernel,
-		      this_node = MyNode,
-		      socket = Socket,
-		      timer = Timer,
-		      this_flags = 0,
-		      allowed = Allowed,
-		      f_send = fun Driver:send/2,
-		      f_recv = fun Driver:recv/3,
-		      f_setopts_pre_nodeup = 
-		      fun(S) ->
-			      inet:setopts(S, 
-					   [{active, false},
-					    {packet, 4},
-					    nodelay()])
-		      end,
-		      f_setopts_post_nodeup = 
-		      fun(S) ->
-			      inet:setopts(S, 
-					   [{active, true},
-					    {deliver, port},
-					    {packet, 4},
-					    nodelay()])
-		      end,
-		      f_getll = fun(S) ->
-					inet:getll(S)
-				end,
-		      f_address = fun(S, Node) -> get_remote_id(Driver, S, Node) end,
-		      mf_tick = fun(S) -> ?MODULE:tick(Driver, S) end,
-		      mf_getstat = fun ?MODULE:getstat/1,
-		      mf_setopts = fun ?MODULE:setopts/2,
-		      mf_getopts = fun ?MODULE:getopts/2
-		     },
-		    dist_util:handshake_other_started(HSData);
-		{false,IP} ->
-		    error_msg("** Connection attempt from "
-			      "disallowed IP ~w ** ~n", [IP]),
-		    ?shutdown(no_node)
-	    end
+        HSData = #hs_data{
+            kernel_pid = Kernel,
+            this_node = MyNode,
+            socket = Socket,
+            timer = Timer,
+            this_flags = 0,
+            allowed = Allowed,
+            f_send = fun Driver:send/2,
+            f_recv = fun Driver:recv/3,
+            f_setopts_pre_nodeup = 
+            fun(S) ->
+                inet:setopts(S, 
+                    [{active, false},
+                    {packet, 4},
+                    nodelay()])
+            end,
+            f_setopts_post_nodeup = 
+            fun(S) ->
+                inet:setopts(S, 
+                    [{active, true},
+                    {deliver, port},
+                    {packet, 4},
+                    nodelay()])
+            end,
+            f_getll = fun(S) ->
+                inet:getll(S)
+            end,
+            f_address = fun(S, Node) -> get_remote_id(Driver, S, Node) end,
+            mf_tick = fun(S) -> ?MODULE:tick(Driver, S) end,
+            mf_getstat = fun ?MODULE:getstat/1,
+            mf_setopts = fun ?MODULE:setopts/2,
+            mf_getopts = fun ?MODULE:getopts/2
+            },
+        dist_util:handshake_other_started(HSData)
     end.
 
 
@@ -321,9 +314,7 @@ do_setup(Driver, Kernel, Node, Type, MyNode, LongOrShortNames, SetupTime) ->
                                 mf_setopts = fun ?MODULE:setopts/2,
                                 mf_getopts = fun ?MODULE:getopts/2
                             },
-                            Res = (catch dist_util:handshake_we_started(HSData)),
-                            error_logger:info_msg("Res: ~p~n", [Res]),
-                            Res;
+                            dist_util:handshake_we_started(HSData);
                         _ ->
                             error_logger:info_msg("Failed to connect to ~p~n", [{Ip, TcpPort}]),
                             %% Other Node may have closed since 
@@ -408,41 +399,6 @@ get_tcp_address(Driver, Socket) ->
 		  family = Driver:family()
 		 }.
 
-%% ------------------------------------------------------------
-%% Do only accept new connection attempts from nodes at our
-%% own LAN, if the check_ip environment parameter is true.
-%% ------------------------------------------------------------
-check_ip(Driver, Socket) ->
-    case application:get_env(check_ip) of
-	{ok, true} ->
-	    case get_ifs(Socket) of
-		{ok, IFs, IP} ->
-		    check_ip(Driver, IFs, IP);
-		_ ->
-		    ?shutdown(no_node)
-	    end;
-	_ ->
-	    true
-    end.
-
-get_ifs(Socket) ->
-    case inet:peername(Socket) of
-	{ok, {IP, _}} ->
-	    case inet:getif(Socket) of
-		{ok, IFs} -> {ok, IFs, IP};
-		Error     -> Error
-	    end;
-	Error ->
-	    Error
-    end.
-
-check_ip(Driver, [{OwnIP, _, Netmask}|IFs], PeerIP) ->
-    case {Driver:mask(Netmask, PeerIP), Driver:mask(Netmask, OwnIP)} of
-	{M, M} -> true;
-	_      -> check_ip(Driver, IFs, PeerIP)
-    end;
-check_ip(_Driver, [], PeerIP) ->
-    {false, PeerIP}.
     
 is_node_name(Node) when is_atom(Node) ->
     case split_node(atom_to_list(Node), $@, []) of

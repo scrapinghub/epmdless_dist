@@ -130,56 +130,14 @@ close(Socket) ->
     gen_tcp:close(Socket),
     ok.
 
-do_accept(Driver, Kernel, AcceptPid, Socket, MyNode, Allowed, SetupTime) ->
+do_accept(_Driver, Kernel, AcceptPid, Socket, MyNode, Allowed, SetupTime) ->
     process_flag(priority, max),
     receive
 	{AcceptPid, controller} ->
 	    Timer = dist_util:start_timer(SetupTime),
-	    case check_ip(Driver, Socket) of
-		true ->
-		    HSData = accept_hs_data(Kernel, MyNode, Socket, Timer, Allowed),
-		    dist_util:handshake_other_started(HSData);
-		{false,IP} ->
-		    error_logger:error_msg("** Connection attempt from "
-					   "disallowed IP ~w ** ~n", [IP]),
-		    ?shutdown(no_node)
-	    end
+        HSData = accept_hs_data(Kernel, MyNode, Socket, Timer, Allowed),
+        dist_util:handshake_other_started(HSData)
     end.
-%% ------------------------------------------------------------
-%% Do only accept new connection attempts from nodes at our
-%% own LAN, if the check_ip environment parameter is true.
-%% ------------------------------------------------------------
-check_ip(Driver, Socket) ->
-    case application:get_env(check_ip) of
-	{ok, true} ->
-	    case get_ifs(Socket) of
-		{ok, IFs, IP} ->
-		    check_ip(Driver, IFs, IP);
-		_ ->
-		    ?shutdown(no_node)
-	    end;
-	_ ->
-	    true
-    end.
-
-get_ifs(Socket) ->
-    case inet:peername(Socket) of
-	{ok, {IP, _}} ->
-	    case inet:getif(Socket) of
-		{ok, IFs} -> {ok, IFs, IP};
-		Error     -> Error
-	    end;
-	Error ->
-	    Error
-    end.
-
-check_ip(Driver, [{OwnIP, _, Netmask}|IFs], PeerIP) ->
-    case {Driver:mask(Netmask, PeerIP), Driver:mask(Netmask, OwnIP)} of
-	{M, M} -> true;
-	_      -> check_ip(IFs, PeerIP)
-    end;
-check_ip(_Driver, [], PeerIP) ->
-    {false, PeerIP}.
 
 
 %% If Node is illegal terminate the connection setup!!
