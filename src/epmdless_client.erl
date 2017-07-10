@@ -1,5 +1,7 @@
 -module(epmdless_client).
 
+-behaviour(gen_server).
+
 %% @doc
 %% Module which used as a callback which passed to erlang vm via `-epmd_module` attribute
 %% @end
@@ -8,10 +10,13 @@
 -export([start_link/0, register_node/3, host_please/1, port_please/2, names/1]).
 %% gen server callbacks
 -export([init/1, handle_info/2, handle_cast/2, handle_call/3, terminate/2, code_change/3]).
-%% auxiliary  API
+%% db funcs
 -export([add_node/2, add_node/3, remove_node/1, list_nodes/0]).
+%% auxiliary funcs
+-export([get_info/0]).
 
 -record(state, {
+    dist_port   :: inet:port_number(),
     nodes = #{} :: map()
 }).
 
@@ -25,11 +30,8 @@ start_link() ->
       Port       :: inet:port_number(),
       Family     :: atom(),
       CreationId :: 1..3.
-%% @doc
-%% registering self
-%% @end
-register_node(Name, Port, _Family) ->
-    ok = add_node(Name, Port),
+register_node(_Name, Port, _Family) ->
+    gen_server:call(?MODULE, {port, Port}, infinity),
     {ok, rand:uniform(3)}.
 
 
@@ -38,10 +40,10 @@ register_node(Name, Port, _Family) ->
       Host :: inet:hostname() | inet:ip_address().
 host_please(Node) ->
     case gen_server:call(?MODULE, {host_please, Node}, infinity) of
-        {error, nohost} -> 
+        {error, nohost} ->
             error_logger:info_msg("No host found for node ~p~n", [Node]),
             nohost;
-        {ok, Host} -> 
+        {ok, Host} ->
             error_logger:info_msg("Found host ~p for node ~p~n", [Host, Node]),
             {host, Host}
     end.
@@ -53,7 +55,7 @@ host_please(Node) ->
       Port    :: inet:port_number(),
       Version :: 5.
 %% @doc
-%% request port of node `Name` 
+%% request port of node `Name`
 %% @end
 port_please(Name, Host) ->
     case gen_server:call(?MODULE, {port_please, Name, Host}, infinity) of
@@ -106,6 +108,12 @@ names(_Hostname) ->
     {error, address}.
 
 
+-spec get_info() -> Info when
+      Info :: [{dist_port, inet:port_number()}].
+get_info() ->
+    gen_server:call(?MODULE, get_info, infinity).
+
+
 init([]) ->
     {ok, #state{}}.
 
@@ -142,6 +150,13 @@ handle_call({port_please, Node, Host}, _From, State) ->
         {ok, {_H, P}} -> {ok, P}
     end,
     {reply, Reply, State};
+
+handle_call({port, DistPort}, _From, State) ->
+    error_logger:info_msg("Starting erlang distribution at port ~p~n", [DistPort]),
+    {reply, ok, State#state{dist_port = DistPort}};
+
+handle_call(get_info, _From, State = #state{dist_port = DistPort}) ->
+    {reply, [{dist_port, DistPort}], State};
 
 handle_call(Msg, _From, State) ->
     error_logger:error_msg("Unexpected message: ~p~n", [Msg]),
