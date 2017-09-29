@@ -227,14 +227,8 @@ do_accept(Driver, Kernel, AcceptPid, Socket, MyNode, Allowed, SetupTime) ->
 
 nodelay() ->
     case application:get_env(kernel, dist_nodelay) of
-	undefined ->
-	    {nodelay, true};
-	{ok, true} ->
-	    {nodelay, true};
-	{ok, false} ->
-	    {nodelay, false};
-	_ ->
-	    {nodelay, true}
+        {ok, true} -> {nodelay, true};
+        _ -> {nodelay, false}
     end.
 
 
@@ -285,7 +279,7 @@ do_setup(Driver, Kernel, Node, Type, MyNode, LongOrShortNames, SetupTime) ->
                 {port, TcpPort, Version} ->
                     ?trace("port_please(~p) -> version ~p~n", [Node,Version]),
                     dist_util:reset_timer(Timer),
-                    case Driver:connect(Ip, TcpPort, connect_options([{active, false}, {packet, 2}])) of
+                    case Driver:connect(Ip, TcpPort, connect_options([{active, false}, {packet, 2}, {reuseaddr, true}])) of
                         {ok, Socket} ->
                             error_logger:info_msg("Connected to ~p~n", [{Ip, TcpPort}]),
                             HSData = #hs_data{

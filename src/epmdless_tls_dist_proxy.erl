@@ -264,7 +264,7 @@ wait_for_code_server() ->
     end.
 
 try_connect(Port) ->
-    case gen_tcp:connect({127,0,0,1}, Port, [{active, false}, {packet,?PPRE}, nodelay()]) of
+    case gen_tcp:connect({127,0,0,1}, Port, [{active, false}, {packet,?PPRE}, nodelay(), {reuseaddr, true}]) of
 	R = {ok, _S} ->
 	    R;
 	{error, _R} ->
@@ -274,8 +274,7 @@ try_connect(Port) ->
 setup_proxy(Driver, Ip, Port, Parent) ->
     process_flag(trap_exit, true),
     Opts = connect_options(get_ssl_options(client)),
-    case ssl:connect(Ip, Port, [{active, true}, binary, {packet,?PPRE}, nodelay(),
-                                Driver:family()] ++ Opts) of
+    case ssl:connect(Ip, Port, [{active, true}, binary, {packet,?PPRE}, nodelay(), {reuseaddr, true}, Driver:family()] ++ Opts) of
 	{ok, World} ->
 	    {ok, ErtsL} = gen_tcp:listen(0, [{active, true}, {ip, loopback}, binary, {packet,?PPRE}]),
 	    {ok, #net_address{address={_,LPort}}} = get_tcp_address(ErtsL),
@@ -302,21 +301,15 @@ setup_proxy(Driver, Ip, Port, Parent) ->
 
 nodelay() ->
     case application:get_env(kernel, dist_nodelay) of
-  undefined ->
-      {nodelay, true};
-  {ok, true} ->
-      {nodelay, true};
-  {ok, false} ->
-      {nodelay, false};
-  _ ->
-      {nodelay, true}
+        {ok, true} -> {nodelay, true};
+        _ -> {nodelay, false}
     end.
 
 setup_connection(World, ErtsListen) ->
     process_flag(trap_exit, true),
     {ok, TcpAddress} = get_tcp_address(ErtsListen),
     {_Addr,Port} = TcpAddress#net_address.address,
-    {ok, Erts} = gen_tcp:connect({127,0,0,1}, Port, [{active, true}, binary, {packet,?PPRE}, nodelay()]),
+    {ok, Erts} = gen_tcp:connect({127,0,0,1}, Port, [{active, true}, binary, {packet,?PPRE}, nodelay(), {reuseaddr, true}]),
     ssl:setopts(World, [{active,true}, {packet,?PPRE}, nodelay()]),
     loop_conn_setup(World, Erts).
 
