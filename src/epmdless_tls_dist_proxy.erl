@@ -215,10 +215,7 @@ accept_loop(Proxy, world = Type, Listen, Extra) ->
 	    wait_for_code_server(),
 	    case ssl:ssl_accept(Socket, Opts) of
 		{ok, SslSocket} ->
-		    PairHandler =
-			spawn_link(fun() ->
-					   setup_connection(SslSocket, Extra)
-				   end),
+		    PairHandler = spawn_link(fun() -> setup_connection(SslSocket, Extra) end),
 		    ok = ssl:controlling_process(SslSocket, PairHandler),
 		    flush_old_controller(PairHandler, SslSocket);
 		{error, {options, _}} = Error ->
@@ -309,9 +306,15 @@ setup_connection(World, ErtsListen) ->
     process_flag(trap_exit, true),
     {ok, TcpAddress} = get_tcp_address(ErtsListen),
     {_Addr,Port} = TcpAddress#net_address.address,
-    {ok, Erts} = gen_tcp:connect({127,0,0,1}, Port, [{active, true}, binary, {packet,?PPRE}, nodelay(), {reuseaddr, true}]),
-    ssl:setopts(World, [{active,true}, {packet,?PPRE}, nodelay()]),
-    loop_conn_setup(World, Erts).
+    case gen_tcp:connect({127,0,0,1}, Port, [{active, true}, binary, {packet,?PPRE}, nodelay(), {reuseaddr, true}]) of
+        {ok, Erts} ->
+            ssl:setopts(World, [{active,true}, {packet,?PPRE}, nodelay()]),
+            loop_conn_setup(World, Erts);
+        Error ->
+            error_logger:error_msg("Failed to setup connection to erts with ~p", [Error]),
+            ssl:close(World)
+    end.
+
 
 loop_conn_setup(World, Erts) ->
     receive 
