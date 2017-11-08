@@ -319,51 +319,52 @@ setup_connection(World, ErtsListen) ->
 
 loop_conn_setup(World, Erts) ->
     receive 
-	{ssl, World, Data = <<$a, _/binary>>} ->
-	    gen_tcp:send(Erts, Data),
-	    ssl:setopts(World, [{packet,?PPOST}, nodelay()]),
-	    inet:setopts(Erts, [{packet,?PPOST}, nodelay()]),
-	    loop_conn(World, Erts);
-	{tcp, Erts, Data = <<$a, _/binary>>} ->
-	    ssl:send(World, Data),
-	    ssl:setopts(World, [{packet,?PPOST}, nodelay()]),
-	    inet:setopts(Erts, [{packet,?PPOST}, nodelay()]),
-	    loop_conn(World, Erts);
-	{ssl, World, Data = <<_, _/binary>>} ->
-	    gen_tcp:send(Erts, Data),
-	    loop_conn_setup(World, Erts);
-	{tcp, Erts, Data = <<_, _/binary>>} ->
-	    ssl:send(World, Data),
-	    loop_conn_setup(World, Erts);
-	{ssl, World, Data} ->
-	    gen_tcp:send(Erts, Data),
-	    loop_conn_setup(World, Erts);
-	{tcp, Erts, Data} ->
-	    ssl:send(World, Data),
-	    loop_conn_setup(World, Erts);
-	{tcp_closed, Erts} ->
-	    ssl:close(World);
-	{ssl_closed,  World} ->
-	    gen_tcp:close(Erts);
-	{ssl_error, World, _} ->
-
-	    ssl:close(World)
+        {ssl, World, Data = <<$a, _/binary>>} ->
+            gen_tcp:send(Erts, Data),
+            ssl:setopts(World, [{packet,?PPOST}, nodelay(), {active, once}]),
+            inet:setopts(Erts, [{packet,?PPOST}, nodelay(), {active, once}]),
+            loop_conn(World, Erts);
+        {tcp, Erts, Data = <<$a, _/binary>>} ->
+            ssl:send(World, Data),
+            ssl:setopts(World, [{packet,?PPOST}, nodelay(), {active, once}]),
+            inet:setopts(Erts, [{packet,?PPOST}, nodelay(), {active, once}]),
+            loop_conn(World, Erts);
+        {ssl, World, Data = <<_, _/binary>>} ->
+            gen_tcp:send(Erts, Data),
+            loop_conn_setup(World, Erts);
+        {tcp, Erts, Data = <<_, _/binary>>} ->
+            ssl:send(World, Data),
+            loop_conn_setup(World, Erts);
+        {ssl, World, Data} ->
+            gen_tcp:send(Erts, Data),
+            loop_conn_setup(World, Erts);
+        {tcp, Erts, Data} ->
+            ssl:send(World, Data),
+            loop_conn_setup(World, Erts);
+        {tcp_closed, Erts} ->
+            ssl:close(World);
+        {ssl_closed,  World} ->
+            gen_tcp:close(Erts);
+        {ssl_error, World, _} ->
+            ssl:close(World)
     end.
 
 loop_conn(World, Erts) ->
-    receive 
-	{ssl, World, Data} ->
-	    gen_tcp:send(Erts, Data),
-	    loop_conn(World, Erts);
-	{tcp, Erts, Data} ->
-	    ssl:send(World, Data),
-	    loop_conn(World, Erts);
-	{tcp_closed, Erts} ->
-	    ssl:close(World);
-	{ssl_closed,  World} ->
-	    gen_tcp:close(Erts);
-	{ssl_error, World, _} ->
-	    ssl:close(World)
+    receive
+        {ssl, World, Data} ->
+            gen_tcp:send(Erts, Data),
+            ssl:setopts(World, [{active, once}]),
+            loop_conn(World, Erts);
+        {tcp, Erts, Data} ->
+            ssl:send(World, Data),
+            inet:setopts(Erts, [{active, once}]),
+            loop_conn(World, Erts);
+        {tcp_closed, Erts} ->
+            ssl:close(World);
+        {ssl_closed,  World} ->
+            gen_tcp:close(Erts);
+        {ssl_error, World, _} ->
+            ssl:close(World)
     end.
 
 
