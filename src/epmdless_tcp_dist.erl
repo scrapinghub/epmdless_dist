@@ -279,7 +279,7 @@ do_setup(Driver, Kernel, Node, Type, MyNode, LongOrShortNames, SetupTime) ->
                 {port, TcpPort, Version} ->
                     ?trace("port_please(~p) -> version ~p~n", [Node,Version]),
                     dist_util:reset_timer(Timer),
-                    case Driver:connect(Ip, TcpPort, connect_options([{active, false}, {packet, 2}, {reuseaddr, true}])) of
+                    case Driver:connect(Ip, TcpPort, connect_options([{active, false}, {packet, 2}, {reuseaddr, true}, {buffer, 65536}])) of
                         {ok, Socket} ->
                             error_logger:info_msg("Connected to ~p~n", [{Ip, TcpPort}]),
                             HSData = #hs_data{
