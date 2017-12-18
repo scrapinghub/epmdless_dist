@@ -87,8 +87,9 @@ add_node(Node, Host, Port) ->
     ok = gen_server:call(?MODULE, {add_node, Node, Host, Port}, infinity).
 
 
--spec list_nodes() -> [{Node, Port}] when
+-spec list_nodes() -> [{Node, {Host, Port}}] when
       Node :: atom(),
+      Host :: string(),
       Port :: inet:port_number().
 list_nodes() ->
     Nodes = gen_server:call(?MODULE, list_nodes, infinity),
