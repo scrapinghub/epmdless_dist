@@ -116,7 +116,25 @@ get_info() ->
 
 
 init([]) ->
-    {ok, #state{}}.
+    Nodes = 
+    lists:foldl(
+      fun({Node, Host, Port}, NodeAcc) ->
+              maps:put(Node, {Host, Port}, NodeAcc)
+      end,
+      #{},
+      parse_nodes(os:getenv("EPMDLESS_DIST_NODES", ""))),
+    {ok, #state{ nodes = Nodes }}.
+
+parse_nodes(EnvVar) ->
+    parse_nodes(string:tokens(EnvVar, "|"), []).
+
+parse_nodes([], Done) -> Done;
+parse_nodes([NodePort|Rest], Done) ->
+    parse_nodes(Rest, [parse_node_port(NodePort)|Done]).
+
+parse_node_port(NodePort) ->
+    [Node, Host, Port] = string:tokens(NodePort, "@:"),
+    {list_to_atom(Node++"@"++Host), Host, list_to_integer(Port)}.
 
 
 handle_info(Msg, State) ->
