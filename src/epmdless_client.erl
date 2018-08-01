@@ -26,7 +26,7 @@
          terminate/2,
          code_change/3]).
 
-
+-define(APP, epmdless_dist).
 -define(REGISTRY, epmdless_dist_node_registry).
 -define(REG_ATOM, epmdless_dist_node_registry_atoms).
 -define(REG_HOST, epmdless_dist_node_registry_hosts).
@@ -404,8 +404,8 @@ insert_ignore(Node = #node{ key = NK, host = Host, port = Port}) ->
 
 node_list() ->
     [ tuple_to_node(T)
-      || {L, D, P} = T <- case application:get_env(epmdless_dist, ?FUNCTION_NAME) of
-                              undefined -> get_os_env(?FUNCTION_NAME);
+      || {L, D, P} = T <- case application:get_env(?APP, ?FUNCTION_NAME) of
+                              undefined -> get_os_env(?APP, ?FUNCTION_NAME);
                               {ok, Tuples} -> Tuples 
                           end,
          is_atom(L) andalso is_atom(D) andalso is_integer(P) ].
@@ -452,11 +452,11 @@ node_from_node_key(NK = #node_key{local_part = LP, domain = D},
     N#node{added_ts = erlang:system_time(microsecond),
            key = NK}.
 
+get_os_env(App, EnvKey) ->
+    get_os_env(join_list($_, [App, EnvKey])).
+
 get_os_env(EnvKeyAtom) when is_atom(EnvKeyAtom) ->
-    case application:get_application() of
-        {ok, App} -> get_os_env(join_list($_, [App, EnvKeyAtom]));
-        undefined -> get_os_env(atom_to_list(EnvKeyAtom))
-    end;
+    get_os_env(atom_to_list(EnvKeyAtom));
 get_os_env(EnvKeyString) when is_list(EnvKeyString) ->
     String = os:getenv(string:to_upper(EnvKeyString), "[]."),
     {ok, Tokens, _} = erl_scan:string(String),
