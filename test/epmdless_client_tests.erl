@@ -68,8 +68,13 @@ port_please() ->
     noport = epmdless_client:?FUNCTION_NAME('not', 'exists'),
     noport = epmdless_client:?FUNCTION_NAME('not@exists', 'exists'),
     {port, 3, 5} = epmdless_client:?FUNCTION_NAME(e, d),
+    {port, 3, 5} = epmdless_client:?FUNCTION_NAME(e, "d"),
+    {port, 3, 5} = epmdless_client:?FUNCTION_NAME("e", d),
+    {port, 3, 5} = epmdless_client:?FUNCTION_NAME("e", "d"),
+    {port, 3, 5} = epmdless_client:?FUNCTION_NAME('e@d', d),
     {port, 3, 5} = epmdless_client:?FUNCTION_NAME('e@d', "d"),
-    {port, 3, 5} = epmdless_client:?FUNCTION_NAME(e, "d").
+    {port, 3, 5} = epmdless_client:?FUNCTION_NAME("e@d", d),
+    {port, 3, 5} = epmdless_client:?FUNCTION_NAME("e@d", "d").
 
 add_node() ->
     ok = epmdless_client:?FUNCTION_NAME('i@j', 11111),

@@ -101,8 +101,8 @@ port_please(Node, Host) ->
   port_please(Node, Host, infinity).
 
 -spec port_please(Name, Host, Timeout) -> {port, Port, Version} | noport when
-      Name    :: atom(),
-      Host    :: atom() | inet:hostname() | inet:ip_address(),
+      Name    :: list() | atom(),
+      Host    :: list() | atom() | inet:hostname() | inet:ip_address(),
       Timeout :: integer() | infinity,
       Port    :: inet:port_number(),
       Version :: 5.
@@ -254,6 +254,9 @@ handle_call({host_please, Node}, _From, State) when is_atom(Node) ->
     end,
     {reply, Reply, State};
 
+handle_call({port_please, LocalPart, Host}, From, State)
+  when is_list(LocalPart) ->
+    handle_call({port_please, list_to_atom(LocalPart), Host}, From, State);
 handle_call({port_please, LocalPart, Host}, _From, State = #state{version = Version})
   when is_atom(LocalPart) ->
     Reply =
@@ -355,7 +358,11 @@ lookup_port(LocalPart, Domain) when is_atom(Domain) ->
     end,
     ets:lookup_element(?REGISTRY, NodeKey, #node.port);
 lookup_port(LocalPart, Host) ->
-    Domain = ets:lookup_element(?REG_HOST, Host, #map.value),
+    Domain =
+    case ets:lookup(?REG_HOST, Host) of
+        [#map{value=Value}] -> Value;
+        [] -> list_to_atom(Host) 
+    end,
     lookup_port(LocalPart, Domain).
 
 
