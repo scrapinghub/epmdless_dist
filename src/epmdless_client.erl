@@ -6,196 +6,458 @@
 %% Module which used as a callback which passed to erlang vm via `-epmd_module` attribute
 %% @end
 
-%% epmd callbacks
--export([start_link/0, register_node/3, host_please/1, port_please/2, names/1]).
-%% gen server callbacks
--export([init/1, handle_info/2, handle_cast/2, handle_call/3, terminate/2, code_change/3]).
-%% db funcs
+%% erl_epmd callbacks
+-export([start/0, start_link/0, stop/0,
+         register_node/2, register_node/3,
+         port_please/2, port_please/3,
+         names/0, names/1]).
+-export([names_dirty/0, names_dirty/1]).
+%% auxiliary extensions
+-export([get_info/0, node_please/1, host_please/1]).
+%% dirty auxiliary extensions
+-export([node_please_dirty/1]).
+%% node maintenance functions
 -export([add_node/2, add_node/3, remove_node/1, list_nodes/0]).
-%% auxiliary funcs
--export([get_info/0]).
+%% gen_server callbacks
+-export([init/1,
+         handle_call/3,
+         handle_cast/2,
+         handle_info/2,
+         terminate/2,
+         code_change/3]).
+
+
+-define(REGISTRY, epmdless_dist_node_registry).
+-define(REG_ATOM, epmdless_dist_node_registry_atoms).
+-define(REG_HOST, epmdless_dist_node_registry_hosts).
+-define(REG_PART, epmdless_dist_node_registry_parts).
+-define(ETS_OPTS(Type, KeyIdx), [Type, protected, named_table,
+                                 {keypos, KeyIdx},
+                                 {read_concurrency, true}]).
+-define(NODE_MATCH(NodeKey), #node{key=NodeKey,
+                                   name_atom='$3',
+                                   host='$4',
+                                   port='$1',
+                                   added_ts='_'}).
+
+-record(node_key, {
+          %% using e-mail terminology: https://www.w3.org/Protocols/rfc822/#z8
+          %% addr-spec   =  local-part "@" domain        ; global address
+          local_part :: atom(),
+          domain :: atom()
+         }).
+
+-record(node, {
+          key :: #node_key{},
+          name_atom :: atom(), %% formatted full node name as an atom
+          host :: inet:hostname() | inet:ip_address(),
+          port :: inet:port_number(),
+          added_ts :: integer()
+         }).
+
+-record(map, {
+          key,
+          value
+         }).
 
 -record(state, {
-    dist_port   :: inet:port_number(),
-    nodes = #{} :: map()
+    creation :: 1|2|3,
+    name   :: atom(),
+    port   :: inet:port_number(),
+    family :: atom(),
+    version = 5
 }).
 
+
+% erl_epmd API
+
+start() ->
+    gen_server:start({local, ?MODULE}, ?MODULE, [], []).
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
+stop() ->
+    gen_server:call(?MODULE, stop, infinity).
+
+
+register_node(Name, PortNo) ->
+    register_node(Name, PortNo, inet).
 
 -spec register_node(Name, Port, Family) -> {ok, CreationId} when
       Name       :: atom(),
       Port       :: inet:port_number(),
       Family     :: atom(),
       CreationId :: 1..3.
-register_node(_Name, Port, _Family) ->
-    gen_server:call(?MODULE, {port, Port}, infinity),
-    {ok, rand:uniform(3)}.
+register_node(Name, PortNo, inet_tcp) ->
+    register_node(Name, PortNo, inet);
+register_node(Name, PortNo, inet6_tcp) ->
+    register_node(Name, PortNo, inet6);
+register_node(Name, Port, Family) ->
+    gen_server:call(?MODULE, {?FUNCTION_NAME, Name, Port, Family}, infinity).
 
 
--spec host_please(Node) -> {host, Host} | nohost when
-      Node :: atom(),
-      Host :: inet:hostname() | inet:ip_address().
-host_please(Node) ->
-    case gen_server:call(?MODULE, {host_please, Node}, infinity) of
-        {error, nohost} ->
-            error_logger:info_msg("No host found for node ~p~n", [Node]),
-            nohost;
-        {ok, Host} ->
-            error_logger:info_msg("Found host ~p for node ~p~n", [Host, Node]),
-            {host, Host}
-    end.
+port_please(Node, Host) ->
+  port_please(Node, Host, infinity).
 
-
--spec port_please(Name, Host) -> {port, Port, Version} | noport when
+-spec port_please(Name, Host, Timeout) -> {port, Port, Version} | noport when
       Name    :: atom(),
-      Host    :: inet:hostname(),
+      Host    :: atom() | inet:hostname() | inet:ip_address(),
+      Timeout :: integer() | infinity,
       Port    :: inet:port_number(),
       Version :: 5.
 %% @doc
 %% request port of node `Name`
 %% @end
-port_please(Name, Host) ->
-    case gen_server:call(?MODULE, {port_please, Name, Host}, infinity) of
-        {ok, Port} ->
-            error_logger:info_msg("Resolved port for ~p/~p to ~p~n", [Name, Host, Port]),
-            {port, Port, 5};
-        {error, noport} ->
-            error_logger:info_msg("No port for ~p/~p~n", [Name, Host]),
-            noport
+port_please(Name, Host, Timeout) ->
+    gen_server:call(?MODULE, {?FUNCTION_NAME, Name, Host}, Timeout).
+
+
+names() ->
+    {ok, Host} = inet:gethostname(),
+    names(Host).
+%% @doc
+%% List the Erlang nodes on a certain host.
+%% @end
+names(Hostname) ->
+    gen_server:call(?MODULE, {?FUNCTION_NAME, Hostname}, infinity).
+
+
+%% Dirty Extensions
+
+names_dirty() ->
+    {ok, Host} = inet:gethostname(),
+    names_dirty(Host).
+
+names_dirty(Host) ->
+    names_dirty(Host, whereis(?MODULE)).
+
+names_dirty(_Host, undefined) -> undefined;
+names_dirty(Domain, EpmdClientPid) when is_pid(EpmdClientPid)
+                                        andalso is_atom(Domain) ->
+    NodeKey = #node_key{local_part='_', domain=Domain},
+    MatchSpec = [{?NODE_MATCH(NodeKey), [], ['$3']}],
+    ets:select(?REGISTRY, MatchSpec);
+names_dirty(Host, EpmdClientPid) when is_pid(EpmdClientPid) ->
+    try ets:lookup_element(?REG_HOST, Host, #map.value) of
+        Domain -> names_dirty(Domain, EpmdClientPid)
+    catch
+        error:badarg -> []
     end.
 
-
--spec add_node(Node, Port) -> ok when
-      Node :: atom(),
-      Port :: inet:port_number().
-add_node(Node, Port) ->
-    Host = case string:tokens(atom_to_list(Node), "@") of
-        [_Node, H] -> H;
-        [H]        -> H
-    end,
-    add_node(Node, Host, Port).
-
-
--spec add_node(Node, Host, Port) -> ok when
-      Node :: atom(),
-      Host :: inet:hostname() | inet:ip_address(),
-      Port :: inet:port_number().
-add_node(Node, Host, Port) ->
-    ok = gen_server:call(?MODULE, {add_node, Node, Host, Port}, infinity).
-
-
--spec list_nodes() -> [{Node, {Host, Port}}] when
-      Node :: atom(),
-      Host :: string(),
-      Port :: inet:port_number().
-list_nodes() ->
-    Nodes = gen_server:call(?MODULE, list_nodes, infinity),
-    maps:to_list(Nodes).
-
-
--spec remove_node(Node) -> ok when
-      Node :: atom().
-remove_node(Node) ->
-    ok = gen_server:call(?MODULE, {remove_node, Node}, infinity).
-
-
-%% @doc
-%% List the Erlang nodes on a certain host. We don't need that
-%% @end
-names(_Hostname) ->
-    {error, address}.
-
+%% auxiliary extensions
 
 -spec get_info() -> Info when
       Info :: [{dist_port, inet:port_number()}].
 get_info() ->
     gen_server:call(?MODULE, get_info, infinity).
 
+-spec host_please(Node) -> {host, Host} | nohost when
+      Node :: atom(),
+      Host :: inet:hostname() | inet:ip_address().
+host_please(Node) ->
+    gen_server:call(?MODULE, {?FUNCTION_NAME, Node}, infinity).
+
+-spec node_please(LocalPart) -> {node, Node} | nonode when
+      LocalPart :: atom(),
+      Node :: atom().
+node_please(LocalPart) ->
+    gen_server:call(?MODULE, {?FUNCTION_NAME, LocalPart}, infinity).
+
+
+%% dirty auxiliary extensions
+
+node_please_dirty(LocalPart) ->
+    node_please_dirty(LocalPart, whereis(?MODULE)).
+
+node_please_dirty(_LocalPart, undefined) -> undefined;
+node_please_dirty(LocalPart, EpmdClientPid) when is_pid(EpmdClientPid) ->
+    case ets:member(?REG_ATOM, LocalPart) of
+        % This means we got a NodeName instead of LocalPart,
+        % so we'll just send it back.
+        true -> LocalPart;
+        false ->
+            case ets:lookup_element(?REG_PART, LocalPart, #map.value) of
+                [Domain] ->
+                    ets:lookup_element(?REGISTRY,
+                                       #node_key{local_part=LocalPart, domain=Domain},
+                                       #node.name_atom);
+                Domains when is_list(Domains) ->
+                    {_Ts, NodeAtom} = lookup_last_added_node(LocalPart, Domains),
+                    NodeAtom
+            end
+    end.
+
+
+%% node maintenance functions
+
+-spec add_node(Node, Port) -> ok when
+      Node :: atom(),
+      Port :: inet:port_number().
+add_node(Node, Port) ->
+    ok = gen_server:call(?MODULE, {?FUNCTION_NAME, Node, Port}, infinity).
+
+-spec add_node(Node, Host, Port) -> ok when
+      Node :: atom(),
+      Host :: inet:hostname() | inet:ip_address(),
+      Port :: inet:port_number().
+add_node(Node, Host, Port) ->
+    ok = gen_server:call(?MODULE, {?FUNCTION_NAME, Node, Host, Port}, infinity).
+
+-spec remove_node(Node) -> ok when
+      Node :: atom().
+remove_node(Node) ->
+    ok = gen_server:call(?MODULE, {?FUNCTION_NAME, Node}, infinity).
+
+-spec list_nodes() -> [{Node, {Host, Port}}] when
+      Node :: atom(),
+      Host :: inet:hostname() | inet:ip_address(),
+      Port :: inet:port_number().
+list_nodes() ->
+    gen_server:call(?MODULE, ?FUNCTION_NAME, infinity).
+
+
+%% gen_server callbacks
 
 init([]) ->
-    Nodes = 
-    lists:foldl(
-      fun({Node, Host, Port}, NodeAcc) ->
-              maps:put(Node, {Host, Port}, NodeAcc)
-      end,
-      #{},
-      parse_nodes(os:getenv("EPMDLESS_DIST_NODES", ""))),
-    {ok, #state{ nodes = Nodes }}.
+    ?REGISTRY = ets:new(?REGISTRY, ?ETS_OPTS(set, #node.key)),
+    ?REG_ATOM = ets:new(?REG_ATOM, ?ETS_OPTS(set, #map.key)),
+    ?REG_HOST = ets:new(?REG_HOST, ?ETS_OPTS(set, #map.key)),
+    ?REG_PART = ets:new(?REG_PART, ?ETS_OPTS(bag, #map.key)),
+    {ok, #state{creation = rand:uniform(3)}}.
 
-parse_nodes(EnvVar) ->
-    parse_nodes(string:tokens(EnvVar, "|"), []).
+handle_call({register_node, Name, DistPort, Family}, _From, State = #state{creation = Creation}) ->
+    %% In order to keep the init function lightweight,
+    %% let's insert preconfigured node here.
+    [insert_ignore(N) || N <- node_list()],
+    error_logger:info_msg("Starting erlang distribution at port ~p~n", [DistPort]),
+    {reply, {ok, Creation}, State#state{name=Name, port=DistPort, family=Family}};
 
-parse_nodes([], Done) -> Done;
-parse_nodes([NodePort|Rest], Done) ->
-    parse_nodes(Rest, [parse_node_port(NodePort)|Done]).
+handle_call(get_info, _From, State = #state{port = DistPort}) ->
+    {reply, [{dist_port, DistPort}], State};
 
-parse_node_port(NodePort) ->
-    [Node, Host, Port] = string:tokens(NodePort, "@:"),
-    {list_to_atom(Node++"@"++Host), Host, list_to_integer(Port)}.
+handle_call({node_please, LocalPart}, _From, State) when is_atom(LocalPart) ->
+    Reply = node_please_dirty(LocalPart, self()),
+    {reply, Reply, State};
 
+handle_call({host_please, Node}, _From, State) when is_atom(Node) ->
+    Reply =
+    try
+        NodeKey = ets:lookup_element(?REG_ATOM, Node, #map.value),
+        ets:lookup_element(?REGISTRY, NodeKey, #node.host)
+    of
+        Host -> {host, Host}
+    catch
+        error:badarg ->
+            error_logger:info_msg("No host found for node ~p~n", [Node]),
+            nohost
+    end,
+    {reply, Reply, State};
 
-handle_info(Msg, State) ->
-    error_logger:error_msg("Unexpected message: ~p~n", [Msg]),
-    {noreply, State}.
-
-
-handle_cast(Msg, State) ->
-    error_logger:error_msg("Unexpected message: ~p~n", [Msg]),
-    {noreply, State}.
-
+handle_call({port_please, LocalPart, Host}, _From, State = #state{version = Version})
+  when is_atom(LocalPart) ->
+    Reply =
+    try lookup_port(LocalPart, Host) of
+        Port -> {port, Port, Version}
+    catch
+        error:badarg ->
+            error_logger:info_msg("No port for ~p@~p~n", [LocalPart, Host]),
+            noport
+    end,
+    {reply, Reply, State};
 
 handle_call(list_nodes, _From, State) ->
-    {reply, State#state.nodes, State};
-
-handle_call({add_node, Node, Host, Port}, _From, State) ->
-    {reply, ok, State#state{nodes = maps:put(Node, {Host, Port}, State#state.nodes)}};
-
-handle_call({remove_node, Node}, _From, State) ->
-    {reply, ok, State#state{nodes = maps:remove(Node, State#state.nodes)}};
-
-handle_call({host_please, Node}, _From, State) ->
-    Reply = case maps:find(Node, State#state.nodes) of
-        error -> {error, nohost};
-        {ok, {H, _P}} -> {ok, H}
-    end,
+    Result = {{'$3', {{'$4', '$1'}}}},
+    NodeKey = #node_key{local_part='_', domain='_'},
+    MatchSpec = [{?NODE_MATCH(NodeKey), [], [Result]}],
+    Reply = ets:select(?REGISTRY, MatchSpec),
     {reply, Reply, State};
 
-handle_call({port_please, Node, Host}, _From, State) ->
-    Reply = case maps:find(node_host_to_name(Node, Host), State#state.nodes) of
-        error -> {error, noport};
-        {ok, {_H, P}} -> {ok, P}
-    end,
+handle_call({names, Host}, _From, State) ->
+    Reply = names_dirty(Host, self()),
     {reply, Reply, State};
 
-handle_call({port, DistPort}, _From, State) ->
-    error_logger:info_msg("Starting erlang distribution at port ~p~n", [DistPort]),
-    {reply, ok, State#state{dist_port = DistPort}};
+handle_call({add_node, NodeName, Port}, _From, State) when is_atom(NodeName) ->
+    {_, NewState} = handle_cast({add_node, NodeName, Port}, State),
+    {reply, ok, NewState};
 
-handle_call(get_info, _From, State = #state{dist_port = DistPort}) ->
-    {reply, [{dist_port, DistPort}], State};
+handle_call({add_node, NodeName, Host, Port}, _From, State) when is_atom(NodeName) ->
+    {_, NewState} = handle_cast({add_node, NodeName, Host, Port}, State),
+    {reply, ok, NewState};
+
+handle_call({remove_node, NodeName}, _From, State) when is_atom(NodeName) ->
+    {_, NewState} = handle_cast({remove_node, NodeName}, State),
+    {reply, ok, NewState};
+
+handle_call(stop, _From, State) ->
+    {stop, shutdown, ok, State};
 
 handle_call(Msg, _From, State) ->
     error_logger:error_msg("Unexpected message: ~p~n", [Msg]),
     {reply, {error, {bad_msg, Msg}}, State}.
 
 
-terminate(_Reason, _State) ->
-    ok.
+handle_cast({add_node, NodeName, Port}, State) when is_atom(NodeName) ->
+    Node = atom_to_node(NodeName),
+    insert_ignore(Node#node{port = Port}),
+    {noreply, State};
 
+handle_cast({add_node, NodeName, Host, Port}, State) when is_atom(NodeName) ->
+    Node = atom_to_node(NodeName),
+    insert_ignore(Node#node{host = Host, port = Port}),
+    {noreply, State};
+
+handle_cast({remove_node, NodeName}, State) when is_atom(NodeName) ->
+    try
+        [#map{value = NodeKey}] = ets:take(?REG_ATOM, NodeName),
+        [#node{host = Host}] = ets:take(?REGISTRY, NodeKey),
+        {NodeKey, Host}
+    of
+        {NK = #node_key{domain = Domain}, H} ->
+            true = case names_dirty(Domain, self()) of
+                       % Only delete the host mapping
+                       % if there're no other nodes with the same domain.
+                       [] -> ets:delete(?REG_HOST, H);
+                       _ -> true
+                   end,
+            true = ets:delete(?REG_PART, NK#node_key.local_part)
+    catch
+        error:_ -> ok
+    end,
+    {noreply, State};
+
+handle_cast(Msg, State) ->
+    error_logger:error_msg("Unexpected message: ~p~n", [Msg]),
+    {noreply, State}.
+
+handle_info(Msg, State) ->
+    error_logger:error_msg("Unexpected message: ~p~n", [Msg]),
+    {noreply, State}.
+
+terminate(_Reason, _State) ->
+    ets:delete(?REGISTRY),
+    ets:delete(?REG_ATOM),
+    ets:delete(?REG_HOST),
+    ets:delete(?REG_PART),
+    ok.
 
 code_change(_Old, State, _Extra) ->
     {ok, State}.
 
 
-%% internal funcs
+%% internal functions
+
+lookup_port(LocalPart, Domain) when is_atom(Domain) ->
+    NodeKey =
+    case ets:lookup(?REG_ATOM, LocalPart) of
+        [#map{value=Value}] -> Value;
+        [] -> #node_key{local_part=LocalPart, domain=Domain}
+    end,
+    ets:lookup_element(?REGISTRY, NodeKey, #node.port);
+lookup_port(LocalPart, Host) ->
+    Domain = ets:lookup_element(?REG_HOST, Host, #map.value),
+    lookup_port(LocalPart, Domain).
 
 
--spec node_host_to_name(Node, Host) -> Name when
-      Node :: atom(),
-      Host :: inet:hostname(),
-      Name :: atom().
-node_host_to_name(Node, Host) ->
-    list_to_atom(lists:flatten(io_lib:format("~s@~s", [Node, Host]))).
+lookup_last_added_node(LocalPart, Domains) ->
+    lists:foldl(
+      fun(Domain, {Max, _NodeAtom} = Acc) ->
+              case ets:lookup(?REGISTRY, #node_key{local_part=LocalPart, domain=Domain}) of
+                  [#node{added_ts=Ts, name_atom=NA}] when Max < Ts -> {Ts, NA};
+                  [#node{}] -> Acc
+              end
+      end,
+      {0, undefined},
+      Domains).
+
+insert_ignore(Node = #node{ key = NK, host = Host, port = Port}) ->
+    case ets:lookup(?REGISTRY, NK) of
+        % ignore if Host and Port match
+        [#node{host = Host, port = Port}] -> false; 
+        % update Port if only Host matches
+        [#node{host = Host}] ->
+            true = ets:insert(?REGISTRY, Node);
+        % update Host if only Port matches
+        [#node{port = Port, host = H}] ->
+            true = case names_dirty(NK#node_key.domain, self()) of
+                       % Only delete the host mapping
+                       % if there're no other nodes with the same domain.
+                       [] -> ets:delete(?REG_HOST, H);
+                       _ -> true
+                   end,
+            true = ets:insert(?REG_HOST, #map{key=Node#node.host, value=NK#node_key.domain}),
+            true = ets:insert(?REGISTRY, Node);
+        % insert if Node doesn't exists yet
+        [] ->
+            true = ets:insert(?REG_ATOM, #map{key=Node#node.name_atom, value=NK}),
+            true = ets:insert(?REG_HOST, #map{key=Node#node.host, value=NK#node_key.domain}),
+            true = ets:insert(?REG_PART, #map{key=NK#node_key.local_part, value=NK#node_key.domain}),
+            true = ets:insert(?REGISTRY, Node)
+    end.
+
+node_list() ->
+    [ tuple_to_node(T)
+      || {L, D, P} = T <- case application:get_env(epmdless_dist, ?FUNCTION_NAME) of
+                              undefined -> get_os_env(?FUNCTION_NAME);
+                              {ok, Tuples} -> Tuples 
+                          end,
+         is_atom(L) andalso is_atom(D) andalso is_integer(P) ].
+
+atom_to_node(Atom) when is_atom(Atom) ->    
+    string_to_node(atom_to_list(Atom)).
+
+string_to_node(String) when is_list(String) ->
+    Tokens = string:tokens(String, "@:"),
+    Tuple = erlang:make_tuple(3, undefined,
+                              lists:zip(lists:seq(1, length(Tokens)), Tokens)),
+    tuple_to_node(Tuple).
+
+tuple_to_node({LocalPart, Domain, Port}) ->
+    node_from_node_key(#node_key{local_part=LocalPart, domain=Domain},
+                       #node{port=Port}).
+
+%% First we set the name of the node as an atom,
+%% join_list takes both atoms and strings as input.
+node_from_node_key(NK = #node_key{local_part = LP, domain = D},
+                   N = #node{name_atom = undefined}) ->
+    NameAtom = list_to_atom(join_list($@, [LP, D])),
+    node_from_node_key(NK, N#node{name_atom=NameAtom});
+%% Second we check if the domain is a string,
+%% if so we set the host to be the domain
+%% while the domain itself is converted to and atom.
+node_from_node_key(NK = #node_key{domain = D},
+                   N) when is_list(D) ->
+    node_from_node_key(NK#node_key{domain = list_to_atom(D)},
+                       N#node{host=D});
+%% Third we ensure the host is set even if domain was originally an atom.
+node_from_node_key(NK = #node_key{domain = D},
+                   N = #node{host = undefined}) when is_atom(D) ->
+    node_from_node_key(NK,
+                       N#node{host=atom_to_list(D)});
+%% Fourth we convert the local_part to an atom if its a list.
+node_from_node_key(NK = #node_key{local_part = LP},
+                   N) when is_list(LP) ->
+    node_from_node_key(NK#node_key{local_part = list_to_atom(LP)},
+                       N);
+%% Lastly we fill out the not yet defined fields of the node record.
+node_from_node_key(NK = #node_key{local_part = LP, domain = D},
+                   N) when is_atom(LP) andalso is_atom(D) ->
+    N#node{added_ts = erlang:system_time(microsecond),
+           key = NK}.
+
+get_os_env(EnvKeyAtom) when is_atom(EnvKeyAtom) ->
+    case application:get_application() of
+        {ok, App} -> get_os_env(join_list($_, [App, EnvKeyAtom]));
+        undefined -> get_os_env(atom_to_list(EnvKeyAtom))
+    end;
+get_os_env(EnvKeyString) when is_list(EnvKeyString) ->
+    String = os:getenv(string:to_upper(EnvKeyString), "[]."),
+    {ok, Tokens, _} = erl_scan:string(String),
+    {ok, Term} = erl_parse:parse_term(Tokens),
+    Term.
+
+join_list(_Chr, [String]) when is_list(String) -> String;
+join_list(_Chr, [Atom]) when is_atom(Atom) -> atom_to_list(Atom);
+join_list(Char, [Head|Tail]) ->
+    join_list(Char, [Head]) ++ [Char|join_list(Char, Tail)].
+
