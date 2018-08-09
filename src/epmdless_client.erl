@@ -177,7 +177,7 @@ node_please_dirty(LocalPart, EpmdClientPid) when is_pid(EpmdClientPid) ->
         % so we'll just send it back.
         true -> LocalPart;
         false ->
-            case ets:lookup_element(?REG_PART, LocalPart, #map.value) of
+            try ets:lookup_element(?REG_PART, LocalPart, #map.value) of
                 [Domain] ->
                     ets:lookup_element(?REGISTRY,
                                        #node_key{local_part=LocalPart, domain=Domain},
@@ -185,6 +185,8 @@ node_please_dirty(LocalPart, EpmdClientPid) when is_pid(EpmdClientPid) ->
                 Domains when is_list(Domains) ->
                     {_Ts, NodeAtom} = lookup_last_added_node(LocalPart, Domains),
                     NodeAtom
+            catch
+                error:badarg -> undefined 
             end
     end.
 
@@ -229,7 +231,7 @@ init([]) ->
 handle_call({register_node, Name, DistPort, Family}, _From, State = #state{creation = Creation}) ->
     %% In order to keep the init function lightweight,
     %% let's insert preconfigured node here.
-    [insert_ignore(N) || N <- node_list()],
+    [insert_ignore(N) || N <- [atom_to_node(node())|node_list()]],
     error_logger:info_msg("Starting erlang distribution at port ~p~n", [DistPort]),
     {reply, {ok, Creation}, State#state{name=Name, port=DistPort, family=Family}};
 

@@ -31,26 +31,30 @@ register_node() ->
      {node,{node_key,a,b},'a@b',"b",1,_},
      {node,{node_key,a,d},'a@d',"d",2,_},
      {node,{node_key,e,b},'e@b',"b",1,_},
-     {node,{node_key,e,d},'e@d',"d",3,_}
+     {node,{node_key,e,d},'e@d',"d",3,_},
+     {node,{node_key,nonode,nohost}, 'nonode@nohost', "nohost", undefined, _}
     ] = lists:sort(ets:tab2list(epmdless_dist_node_registry)),
 
     [
      {map,'a@b',{node_key,a,b}},
      {map,'a@d',{node_key,a,d}},
      {map,'e@b',{node_key,e,b}},
-     {map,'e@d',{node_key,e,d}}
+     {map,'e@d',{node_key,e,d}},
+     {map,nonode@nohost,{node_key,nonode,nohost}}
     ] = lists:sort(ets:tab2list(epmdless_dist_node_registry_atoms)),
 
     [
      {map,"b",b},
-     {map,"d",d}
+     {map,"d",d},
+     {map,"nohost",nohost}
     ] = lists:sort(ets:tab2list(epmdless_dist_node_registry_hosts)),
 
     [
      {map,a,b},
      {map,a,d},
      {map,e,b},
-     {map,e,d}
+     {map,e,d},
+     {map,nonode,nohost}
     ] = lists:sort(ets:tab2list(epmdless_dist_node_registry_parts)).
 
 get_info() ->
@@ -58,7 +62,10 @@ get_info() ->
 
 node_please() ->
     %% should return the last added
-    'a@d' = epmdless_client:?FUNCTION_NAME(a).
+    'a@d' = epmdless_client:?FUNCTION_NAME(a),
+    %% should return undefined
+    undefined = epmdless_client:?FUNCTION_NAME(non_existent).
+
 
 host_please() ->
     nohost = epmdless_client:?FUNCTION_NAME('not@exists'),
@@ -89,7 +96,9 @@ list_nodes() ->
     [{'a@b',{"b",1}},
      {'e@b',{"b",1}},
      {'e@d',{"d",3}},
-     {'i@j',{{1,1,1,1},11111}}] = lists:sort(epmdless_client:?FUNCTION_NAME()).
+     {'i@j',{{1,1,1,1},11111}},
+     {nonode@nohost,{"nohost",undefined}}
+    ] = lists:sort(epmdless_client:?FUNCTION_NAME()).
 
 names() ->
     ['a@b', 'e@b'] = lists:sort(epmdless_client:?FUNCTION_NAME(b)),
