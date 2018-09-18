@@ -29,6 +29,7 @@
 -define(APP, epmdless_dist).
 -define(REGISTRY, epmdless_dist_node_registry).
 -define(REG_ATOM, epmdless_dist_node_registry_atoms).
+-define(REG_ADDR, epmdless_dist_node_registry_addrs).
 -define(REG_HOST, epmdless_dist_node_registry_hosts).
 -define(REG_PART, epmdless_dist_node_registry_parts).
 -define(ETS_OPTS(Type, KeyIdx), [Type, protected, named_table,
@@ -36,6 +37,7 @@
                                  {read_concurrency, true}]).
 -define(NODE_MATCH(NodeKey), #node{key=NodeKey,
                                    name_atom='$3',
+                                   addr='$5',
                                    host='$4',
                                    port='$1',
                                    added_ts='_'}).
@@ -50,7 +52,8 @@
 -record(node, {
           key :: #node_key{},
           name_atom :: atom(), %% formatted full node name as an atom
-          host :: inet:hostname() | inet:ip_address(),
+          addr :: inet:ip_address(),
+          host :: inet:hostname(),
           port :: inet:port_number(),
           added_ts :: integer()
          }).
@@ -138,6 +141,13 @@ names_dirty(Domain, EpmdClientPid) when is_pid(EpmdClientPid)
     NodeKey = #node_key{local_part='_', domain=Domain},
     MatchSpec = [{?NODE_MATCH(NodeKey), [], ['$3']}],
     ets:select(?REGISTRY, MatchSpec);
+names_dirty(IP, EpmdClientPid) when is_pid(EpmdClientPid) andalso
+                                    is_tuple(IP) ->
+    try ets:lookup_element(?REG_ADDR, IP, #map.value) of
+        Domain -> names_dirty(Domain, EpmdClientPid)
+    catch
+        error:badarg -> []
+    end;
 names_dirty(Host, EpmdClientPid) when is_pid(EpmdClientPid) ->
     try ets:lookup_element(?REG_HOST, Host, #map.value) of
         Domain -> names_dirty(Domain, EpmdClientPid)
@@ -224,6 +234,7 @@ list_nodes() ->
 init([]) ->
     ?REGISTRY = ets:new(?REGISTRY, ?ETS_OPTS(set, #node.key)),
     ?REG_ATOM = ets:new(?REG_ATOM, ?ETS_OPTS(set, #map.key)),
+    ?REG_ADDR = ets:new(?REG_ADDR, ?ETS_OPTS(set, #map.key)),
     ?REG_HOST = ets:new(?REG_HOST, ?ETS_OPTS(set, #map.key)),
     ?REG_PART = ets:new(?REG_PART, ?ETS_OPTS(bag, #map.key)),
     {ok, #state{creation = rand:uniform(3)}}.
@@ -231,7 +242,8 @@ init([]) ->
 handle_call({register_node, Name, DistPort, Family}, _From, State = #state{creation = Creation}) ->
     %% In order to keep the init function lightweight,
     %% let's insert preconfigured node here.
-    [insert_ignore(N) || N <- [atom_to_node(node())|node_list()]],
+    AddrGetter = addr_getter(Family),
+    [insert_ignore(N) || N <- [atom_to_node(node(), AddrGetter)|node_list(AddrGetter)]],
     error_logger:info_msg("Starting erlang distribution at port ~p~n", [DistPort]),
     {reply, {ok, Creation}, State#state{name=Name, port=DistPort, family=Family}};
 
@@ -272,9 +284,11 @@ handle_call({port_please, LocalPart, Host}, _From, State = #state{version = Vers
     {reply, Reply, State};
 
 handle_call(list_nodes, _From, State) ->
-    Result = {{'$3', {{'$4', '$1'}}}},
+    ResultHost = {{'$3', {{'$4', '$1'}}}},
+    ResultAddr = {{'$3', {{'$5', '$1'}}}},
     NodeKey = #node_key{local_part='_', domain='_'},
-    MatchSpec = [{?NODE_MATCH(NodeKey), [], [Result]}],
+    MatchSpec = [{?NODE_MATCH(NodeKey), [{'==', undefined, '$5'}], [ResultHost]},
+                 {?NODE_MATCH(NodeKey), [{'/=', undefined, '$5'}], [ResultAddr]}],
     Reply = ets:select(?REGISTRY, MatchSpec),
     {reply, Reply, State};
 
@@ -303,26 +317,34 @@ handle_call(Msg, _From, State) ->
 
 
 handle_cast({add_node, NodeName, Port}, State) when is_atom(NodeName) ->
-    Node = atom_to_node(NodeName),
+    Node = atom_to_node(NodeName, addr_getter(State#state.family)),
     insert_ignore(Node#node{port = Port}),
     {noreply, State};
 
+handle_cast({add_node, NodeName, Addr, Port}, State) when is_atom(NodeName) andalso
+                                                          is_tuple(Addr) ->
+    Node = atom_to_node(NodeName, fun(_) -> Addr end),
+    insert_ignore(Node#node{port = Port}),
+    {noreply, State};
 handle_cast({add_node, NodeName, Host, Port}, State) when is_atom(NodeName) ->
-    Node = atom_to_node(NodeName),
-    insert_ignore(Node#node{host = Host, port = Port}),
+    AddrGetter = addr_getter(State#state.family),
+    Node = atom_to_node(NodeName, AddrGetter),
+    insert_ignore(Node#node{addr = AddrGetter(Host), host = Host, port = Port}),
     {noreply, State};
 
 handle_cast({remove_node, NodeName}, State) when is_atom(NodeName) ->
     try
         [#map{value = NodeKey}] = ets:take(?REG_ATOM, NodeName),
-        [#node{host = Host}] = ets:take(?REGISTRY, NodeKey),
-        {NodeKey, Host}
+        [#node{addr = Addr, host = Host}] = ets:take(?REGISTRY, NodeKey),
+        {NodeKey, Addr, Host}
     of
-        {NK = #node_key{domain = Domain}, H} ->
+        {NK = #node_key{domain = Domain}, A, H} ->
             true = case names_dirty(Domain, self()) of
-                       % Only delete the host mapping
+                       % Only delete the address and host mapping
                        % if there're no other nodes with the same domain.
-                       [] -> ets:delete(?REG_HOST, H);
+                       [] ->
+                           ets:delete(?REG_ADDR, A),
+                           ets:delete(?REG_HOST, H);
                        _ -> true
                    end,
             true = ets:delete(?REG_PART, NK#node_key.local_part)
@@ -342,6 +364,7 @@ handle_info(Msg, State) ->
 terminate(_Reason, _State) ->
     ets:delete(?REGISTRY),
     ets:delete(?REG_ATOM),
+    ets:delete(?REG_ADDR),
     ets:delete(?REG_HOST),
     ets:delete(?REG_PART),
     ok.
@@ -359,6 +382,9 @@ lookup_port(LocalPart, Domain) when is_atom(Domain) ->
         [] -> #node_key{local_part=LocalPart, domain=Domain}
     end,
     ets:lookup_element(?REGISTRY, NodeKey, #node.port);
+lookup_port(LocalPart, IP) when is_tuple(IP) ->
+    Domain = ets:lookup_element(?REG_ADDR, IP, #map.value),
+    lookup_port(LocalPart, Domain);
 lookup_port(LocalPart, Host) ->
     Domain =
     case ets:lookup(?REG_HOST, Host) of
@@ -379,80 +405,111 @@ lookup_last_added_node(LocalPart, Domains) ->
       {0, undefined},
       Domains).
 
-insert_ignore(Node = #node{ key = NK, host = Host, port = Port}) ->
+insert_ignore(Node = #node{ key = NK, addr = Addr, host = Host, port = Port}) ->
     case ets:lookup(?REGISTRY, NK) of
-        % ignore if Host and Port match
-        [#node{host = Host, port = Port}] -> false; 
-        % update Port if only Host matches
-        [#node{host = Host}] ->
+        % ignore if Address, Host and Port match
+        [#node{addr = Addr, host = Host, port = Port}] -> false; 
+        % update Port if Address and Host match
+        [#node{addr = Addr, host = Host}] ->
             true = ets:insert(?REGISTRY, Node);
-        % update Host if only Port matches
-        [#node{port = Port, host = H}] ->
+        % update Address and Host if only Port matches
+        [#node{addr = A, host = H, port = Port}] ->
             true = case names_dirty(NK#node_key.domain, self()) of
                        % Only delete the host mapping
                        % if there're no other nodes with the same domain.
-                       [] -> ets:delete(?REG_HOST, H);
+                       [] ->
+                           ets:delete(?REG_ADDR, A),
+                           ets:delete(?REG_HOST, H);
                        _ -> true
                    end,
-            true = ets:insert(?REG_HOST, #map{key=Node#node.host, value=NK#node_key.domain}),
+            case is_tuple(Addr) of
+                true -> true = ets:insert(?REG_ADDR, #map{key=Addr, value=NK#node_key.domain});
+                _ -> true
+            end,
+            true = ets:insert(?REG_HOST, #map{key=Host, value=NK#node_key.domain}),
             true = ets:insert(?REGISTRY, Node);
         % insert if Node doesn't exists yet
         [] ->
             true = ets:insert(?REG_ATOM, #map{key=Node#node.name_atom, value=NK}),
-            true = ets:insert(?REG_HOST, #map{key=Node#node.host, value=NK#node_key.domain}),
+            case is_tuple(Addr) of
+                true -> true = ets:insert(?REG_ADDR, #map{key=Addr, value=NK#node_key.domain});
+                _ -> true
+            end,
+            true = ets:insert(?REG_HOST, #map{key=Host, value=NK#node_key.domain}),
             true = ets:insert(?REG_PART, #map{key=NK#node_key.local_part, value=NK#node_key.domain}),
             true = ets:insert(?REGISTRY, Node)
     end.
 
-node_list() ->
-    [ tuple_to_node(T)
+node_list(AddrGetter) ->
+    [ tuple_to_node(T, AddrGetter)
       || {L, D, P} = T <- case application:get_env(?APP, ?FUNCTION_NAME) of
                               undefined -> get_os_env(?APP, ?FUNCTION_NAME);
                               {ok, Tuples} -> Tuples 
                           end,
          is_atom(L) andalso is_atom(D) andalso is_integer(P) ].
 
-atom_to_node(Atom) when is_atom(Atom) ->    
-    string_to_node(atom_to_list(Atom)).
+atom_to_node(Atom, AddrGetter) when is_atom(Atom) ->    
+    string_to_node(atom_to_list(Atom), AddrGetter).
 
-string_to_node(String) when is_list(String) ->
+string_to_node(String, AddrGetter) when is_list(String) ->
     Tokens = string:tokens(String, "@:"),
     Tuple = erlang:make_tuple(3, undefined,
                               lists:zip(lists:seq(1, length(Tokens)), Tokens)),
-    tuple_to_node(Tuple).
+    tuple_to_node(Tuple, AddrGetter).
 
-tuple_to_node({LocalPart, Domain, Port}) ->
+tuple_to_node({LocalPart, Domain, Port}, AddrGetter) ->
     node_from_node_key(#node_key{local_part=LocalPart, domain=Domain},
-                       #node{port=Port}).
+                       #node{port=Port},
+                       AddrGetter).
 
 %% First we set the name of the node as an atom,
 %% join_list takes both atoms and strings as input.
 node_from_node_key(NK = #node_key{local_part = LP, domain = D},
-                   N = #node{name_atom = undefined}) ->
+                   N = #node{name_atom = undefined},
+                   AddrGetter) ->
     NameAtom = list_to_atom(join_list($@, [LP, D])),
-    node_from_node_key(NK, N#node{name_atom=NameAtom});
+    node_from_node_key(NK, N#node{name_atom=NameAtom}, AddrGetter);
 %% Second we check if the domain is a string,
 %% if so we set the host to be the domain
 %% while the domain itself is converted to and atom.
 node_from_node_key(NK = #node_key{domain = D},
-                   N) when is_list(D) ->
+                   N,
+                   AddrGetter) when is_list(D) ->
     node_from_node_key(NK#node_key{domain = list_to_atom(D)},
-                       N#node{host=D});
+                       N#node{addr=AddrGetter(D), host=D},
+                       AddrGetter);
 %% Third we ensure the host is set even if domain was originally an atom.
 node_from_node_key(NK = #node_key{domain = D},
-                   N = #node{host = undefined}) when is_atom(D) ->
+                   N = #node{host = undefined},
+                   AddrGetter) when is_atom(D) ->
     node_from_node_key(NK,
-                       N#node{host=atom_to_list(D)});
+                       N#node{addr=AddrGetter(D), host=atom_to_list(D)},
+                       AddrGetter);
 %% Fourth we convert the local_part to an atom if its a list.
 node_from_node_key(NK = #node_key{local_part = LP},
-                   N) when is_list(LP) ->
+                   N,
+                   AddrGetter) when is_list(LP) ->
     node_from_node_key(NK#node_key{local_part = list_to_atom(LP)},
-                       N);
+                       N,
+                       AddrGetter);
 %% Lastly we fill out the not yet defined fields of the node record.
 node_from_node_key(NK = #node_key{local_part = LP, domain = D},
-                   N) when is_atom(LP) andalso is_atom(D) ->
+                   N,
+                   _AddrGetter) when is_atom(LP) andalso is_atom(D) ->
     N#node{added_ts = erlang:system_time(microsecond),
            key = NK}.
+
+addr_getter(AddressFamily) ->
+    fun(Host) ->
+            case inet:getaddr(Host, AddressFamily) of
+                {ok, IPAddress} -> IPAddress;
+                {error, PosixError} ->
+                    error_logger:info_msg("No Address found for host ~p due to ~p~n",
+                                          [Host, PosixError]),
+                    undefined
+            end
+    end.
+
 
 get_os_env(App, EnvKey) ->
     get_os_env(join_list($_, [App, EnvKey])).

@@ -6,7 +6,7 @@ proxy_manager_test_() ->
     {setup,
      fun() ->
         application:set_env(epmdless_dist, node_list,
-                            [{a,b,1},{e,b,1},{a,d,2},{e,d,3}]),
+                            [{a,b,1},{e,b,1},{a,d,2},{e,d,3},{l,localhost,4}]),
         epmdless_client:start_link()
      end,
      fun({ok, Pid}) ->
@@ -26,13 +26,14 @@ proxy_manager_test_() ->
     ]}.
 
 register_node() ->
-    {ok, _} = epmdless_client:?FUNCTION_NAME(test_node, 10000, tcp),
+    {ok, _} = epmdless_client:?FUNCTION_NAME(test_node, 10000, inet_tcp),
     [
-     {node,{node_key,a,b},'a@b',"b",1,_},
-     {node,{node_key,a,d},'a@d',"d",2,_},
-     {node,{node_key,e,b},'e@b',"b",1,_},
-     {node,{node_key,e,d},'e@d',"d",3,_},
-     {node,{node_key,nonode,nohost}, 'nonode@nohost', "nohost", undefined, _}
+     {node,{node_key,a,b},'a@b',undefined,"b",1,_},
+     {node,{node_key,a,d},'a@d',undefined,"d",2,_},
+     {node,{node_key,e,b},'e@b',undefined,"b",1,_},
+     {node,{node_key,e,d},'e@d',undefined,"d",3,_},
+     {node,{node_key,l,localhost},'l@localhost',{127,0,0,1},"localhost",4,_},
+     {node,{node_key,nonode,nohost}, 'nonode@nohost', undefined, "nohost", undefined, _}
     ] = lists:sort(ets:tab2list(epmdless_dist_node_registry)),
 
     [
@@ -40,12 +41,18 @@ register_node() ->
      {map,'a@d',{node_key,a,d}},
      {map,'e@b',{node_key,e,b}},
      {map,'e@d',{node_key,e,d}},
+     {map,'l@localhost',{node_key,l,localhost}},
      {map,nonode@nohost,{node_key,nonode,nohost}}
     ] = lists:sort(ets:tab2list(epmdless_dist_node_registry_atoms)),
 
     [
+     {map,{127,0,0,1},localhost}
+    ] = lists:sort(ets:tab2list(epmdless_dist_node_registry_addrs)),
+
+    [
      {map,"b",b},
      {map,"d",d},
+     {map,"localhost",localhost},
      {map,"nohost",nohost}
     ] = lists:sort(ets:tab2list(epmdless_dist_node_registry_hosts)),
 
@@ -54,6 +61,7 @@ register_node() ->
      {map,a,d},
      {map,e,b},
      {map,e,d},
+     {map,l,localhost},
      {map,nonode,nohost}
     ] = lists:sort(ets:tab2list(epmdless_dist_node_registry_parts)).
 
@@ -81,7 +89,11 @@ port_please() ->
     {port, 3, 5} = epmdless_client:?FUNCTION_NAME('e@d', d),
     {port, 3, 5} = epmdless_client:?FUNCTION_NAME('e@d', "d"),
     {port, 3, 5} = epmdless_client:?FUNCTION_NAME("e@d", d),
-    {port, 3, 5} = epmdless_client:?FUNCTION_NAME("e@d", "d").
+    {port, 3, 5} = epmdless_client:?FUNCTION_NAME("e@d", "d"),
+    {port, 4, 5} = epmdless_client:?FUNCTION_NAME("l", localhost),
+    {port, 4, 5} = epmdless_client:?FUNCTION_NAME("l", {127,0,0,1}),
+    {port, 4, 5} = epmdless_client:?FUNCTION_NAME("l@localhost", {127,0,0,1}),
+    {port, 4, 5} = epmdless_client:?FUNCTION_NAME("l@localhost", localhost).
 
 add_node() ->
     ok = epmdless_client:?FUNCTION_NAME('i@j', 11111),
@@ -97,11 +109,13 @@ list_nodes() ->
      {'e@b',{"b",1}},
      {'e@d',{"d",3}},
      {'i@j',{{1,1,1,1},11111}},
+     {'l@localhost',{{127,0,0,1},4}},
      {nonode@nohost,{"nohost",undefined}}
     ] = lists:sort(epmdless_client:?FUNCTION_NAME()).
 
 names() ->
     ['a@b', 'e@b'] = lists:sort(epmdless_client:?FUNCTION_NAME(b)),
     ['a@b', 'e@b'] = lists:sort(epmdless_client:?FUNCTION_NAME("b")),
+    ['l@localhost'] = lists:sort(epmdless_client:?FUNCTION_NAME({127,0,0,1})),
     [] = epmdless_client:?FUNCTION_NAME().
 
