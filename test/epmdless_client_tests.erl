@@ -27,6 +27,7 @@ proxy_manager_test_() ->
 
 register_node() ->
     {ok, _} = epmdless_client:?FUNCTION_NAME(test_node, 10000, inet_tcp),
+    timer:sleep(100),
     [
      {node,{node_key,a,b},'a@b',undefined,"b",1,_},
      {node,{node_key,a,d},'a@d',undefined,"d",2,_},

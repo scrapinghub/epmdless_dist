@@ -1,5 +1,7 @@
 -module(epmdless_client).
 
+-include_lib("stdlib/include/ms_transform.hrl").
+
 -behaviour(gen_server).
 
 %% @doc
@@ -196,7 +198,7 @@ node_please_dirty(LocalPart, EpmdClientPid) when is_pid(EpmdClientPid) ->
                     {_Ts, NodeAtom} = lookup_last_added_node(LocalPart, Domains),
                     NodeAtom
             catch
-                error:badarg -> undefined 
+                error:badarg -> undefined
             end
     end.
 
@@ -242,8 +244,7 @@ init([]) ->
 handle_call({register_node, Name, DistPort, Family}, _From, State = #state{creation = Creation}) ->
     %% In order to keep the init function lightweight,
     %% let's insert preconfigured node here.
-    AddrGetter = addr_getter(Family),
-    [insert_ignore(N) || N <- [atom_to_node(node(), AddrGetter)|node_list(AddrGetter)]],
+    [addr_setter(insert_ignore(N), Family) || N <- [atom_to_node(node())|node_list()]],
     error_logger:info_msg("Starting erlang distribution at port ~p~n", [DistPort]),
     {reply, {ok, Creation}, State#state{name=Name, port=DistPort, family=Family}};
 
@@ -317,19 +318,18 @@ handle_call(Msg, _From, State) ->
 
 
 handle_cast({add_node, NodeName, Port}, State) when is_atom(NodeName) ->
-    Node = atom_to_node(NodeName, addr_getter(State#state.family)),
-    insert_ignore(Node#node{port = Port}),
+    Node = atom_to_node(NodeName),
+    addr_setter(insert_ignore(Node#node{port = Port}), State#state.family),
     {noreply, State};
 
 handle_cast({add_node, NodeName, Addr, Port}, State) when is_atom(NodeName) andalso
                                                           is_tuple(Addr) ->
-    Node = atom_to_node(NodeName, fun(_) -> Addr end),
-    insert_ignore(Node#node{port = Port}),
+    Node = atom_to_node(NodeName),
+    insert_ignore(Node#node{addr = Addr, port = Port}),
     {noreply, State};
 handle_cast({add_node, NodeName, Host, Port}, State) when is_atom(NodeName) ->
-    AddrGetter = addr_getter(State#state.family),
-    Node = atom_to_node(NodeName, AddrGetter),
-    insert_ignore(Node#node{addr = AddrGetter(Host), host = Host, port = Port}),
+    Node = atom_to_node(NodeName),
+    addr_setter(insert_ignore(Node#node{host = Host, port = Port}), State#state.family),
     {noreply, State};
 
 handle_cast({remove_node, NodeName}, State) when is_atom(NodeName) ->
@@ -351,6 +351,19 @@ handle_cast({remove_node, NodeName}, State) when is_atom(NodeName) ->
     catch
         error:_ -> ok
     end,
+    {noreply, State};
+
+handle_cast({set_addr, Host, error, PosixError}, State) ->
+    error_logger:info_msg("No IP found for ~p due to ~p~n", [Host, PosixError]),
+    {noreply, State};
+handle_cast({set_addr, Host, IPAddress, Domain}, State) ->
+    ets:insert_new(?REG_ADDR, #map{key=IPAddress, value=Domain}),
+    AddrMS = ets:fun2ms(
+                fun (N = #node{addr = A, host = H}) when H == Host andalso
+                                                         A /= IPAddress ->
+                        N#node{addr = IPAddress}
+                end),
+    ets:select_replace(?REGISTRY, AddrMS),
     {noreply, State};
 
 handle_cast(Msg, State) ->
@@ -389,7 +402,7 @@ lookup_port(LocalPart, Host) ->
     Domain =
     case ets:lookup(?REG_HOST, Host) of
         [#map{value=Value}] -> Value;
-        [] -> list_to_atom(Host) 
+        [] -> list_to_atom(Host)
     end,
     lookup_port(LocalPart, Domain).
 
@@ -408,7 +421,7 @@ lookup_last_added_node(LocalPart, Domains) ->
 insert_ignore(Node = #node{ key = NK, addr = Addr, host = Host, port = Port}) ->
     case ets:lookup(?REGISTRY, NK) of
         % ignore if Address, Host and Port match
-        [#node{addr = Addr, host = Host, port = Port}] -> false; 
+        [#node{addr = Addr, host = Host, port = Port}] -> false;
         % update Port if Address and Host match
         [#node{addr = Addr, host = Host}] ->
             true = ets:insert(?REGISTRY, Node);
@@ -438,76 +451,68 @@ insert_ignore(Node = #node{ key = NK, addr = Addr, host = Host, port = Port}) ->
             true = ets:insert(?REG_HOST, #map{key=Host, value=NK#node_key.domain}),
             true = ets:insert(?REG_PART, #map{key=NK#node_key.local_part, value=NK#node_key.domain}),
             true = ets:insert(?REGISTRY, Node)
-    end.
+    end,
+    Node.
 
-node_list(AddrGetter) ->
-    [ tuple_to_node(T, AddrGetter)
+node_list() ->
+    [ tuple_to_node(T)
       || {L, D, P} = T <- case application:get_env(?APP, ?FUNCTION_NAME) of
                               undefined -> get_os_env(?APP, ?FUNCTION_NAME);
-                              {ok, Tuples} -> Tuples 
+                              {ok, Tuples} -> Tuples
                           end,
          is_atom(L) andalso is_atom(D) andalso is_integer(P) ].
 
-atom_to_node(Atom, AddrGetter) when is_atom(Atom) ->    
-    string_to_node(atom_to_list(Atom), AddrGetter).
+atom_to_node(Atom) when is_atom(Atom) ->
+    string_to_node(atom_to_list(Atom)).
 
-string_to_node(String, AddrGetter) when is_list(String) ->
+string_to_node(String) when is_list(String) ->
     Tokens = string:tokens(String, "@:"),
     Tuple = erlang:make_tuple(3, undefined,
                               lists:zip(lists:seq(1, length(Tokens)), Tokens)),
-    tuple_to_node(Tuple, AddrGetter).
+    tuple_to_node(Tuple).
 
-tuple_to_node({LocalPart, Domain, Port}, AddrGetter) ->
+tuple_to_node({LocalPart, Domain, Port}) ->
     node_from_node_key(#node_key{local_part=LocalPart, domain=Domain},
-                       #node{port=Port},
-                       AddrGetter).
+                       #node{port=Port}).
 
 %% First we set the name of the node as an atom,
 %% join_list takes both atoms and strings as input.
 node_from_node_key(NK = #node_key{local_part = LP, domain = D},
-                   N = #node{name_atom = undefined},
-                   AddrGetter) ->
+                   N = #node{name_atom = undefined}) ->
     NameAtom = list_to_atom(join_list($@, [LP, D])),
-    node_from_node_key(NK, N#node{name_atom=NameAtom}, AddrGetter);
+    node_from_node_key(NK, N#node{name_atom=NameAtom});
 %% Second we check if the domain is a string,
 %% if so we set the host to be the domain
 %% while the domain itself is converted to and atom.
 node_from_node_key(NK = #node_key{domain = D},
-                   N,
-                   AddrGetter) when is_list(D) ->
+                   N) when is_list(D) ->
     node_from_node_key(NK#node_key{domain = list_to_atom(D)},
-                       N#node{addr=AddrGetter(D), host=D},
-                       AddrGetter);
+                       N#node{host=D});
 %% Third we ensure the host is set even if domain was originally an atom.
 node_from_node_key(NK = #node_key{domain = D},
-                   N = #node{host = undefined},
-                   AddrGetter) when is_atom(D) ->
+                   N = #node{host = undefined}) when is_atom(D) ->
     node_from_node_key(NK,
-                       N#node{addr=AddrGetter(D), host=atom_to_list(D)},
-                       AddrGetter);
+                       N#node{host=atom_to_list(D)});
 %% Fourth we convert the local_part to an atom if its a list.
 node_from_node_key(NK = #node_key{local_part = LP},
-                   N,
-                   AddrGetter) when is_list(LP) ->
+                   N) when is_list(LP) ->
     node_from_node_key(NK#node_key{local_part = list_to_atom(LP)},
-                       N,
-                       AddrGetter);
+                       N);
 %% Lastly we fill out the not yet defined fields of the node record.
 node_from_node_key(NK = #node_key{local_part = LP, domain = D},
-                   N,
-                   _AddrGetter) when is_atom(LP) andalso is_atom(D) ->
+                   N) when is_atom(LP) andalso is_atom(D) ->
     N#node{added_ts = erlang:system_time(microsecond),
            key = NK}.
 
-addr_getter(AddressFamily) ->
-    fun(Host) ->
-            case inet:getaddr(Host, AddressFamily) of
-                {ok, IPAddress} -> IPAddress;
-                {error, PosixError} ->
-                    error_logger:info_msg("No Address found for host ~p due to ~p~n",
-                                          [Host, PosixError]),
-                    undefined
-            end
+addr_setter(#node{ key = #node_key{ domain = Domain }, host = Host }, AddressFamily) ->
+    spawn(fun() -> set_addr(Host, AddressFamily, Domain) end).
+
+set_addr(Host, AddressFamily, Domain) ->
+    case inet:getaddr(Host, AddressFamily) of
+        {ok, IPAddress} ->
+            gen_server:cast(?MODULE, {?FUNCTION_NAME, Host, IPAddress, Domain});
+        {error, PosixError} ->
+            gen_server:cast(?MODULE, {?FUNCTION_NAME, Host, error, PosixError}) 
     end.
 
 
