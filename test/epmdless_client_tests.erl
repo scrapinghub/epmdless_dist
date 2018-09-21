@@ -34,7 +34,7 @@ register_node() ->
      {node,{node_key,e,b},'e@b',undefined,"b",1,_},
      {node,{node_key,e,d},'e@d',undefined,"d",3,_},
      {node,{node_key,l,localhost},'l@localhost',{127,0,0,1},"localhost",4,_},
-     {node,{node_key,nonode,nohost}, 'nonode@nohost', undefined, "nohost", undefined, _}
+     {node,{node_key,test_node,_testdomain}, _testname, _testip, _testhost, 10000, _}
     ] = lists:sort(ets:tab2list(epmdless_dist_node_registry)),
 
     [
@@ -43,19 +43,21 @@ register_node() ->
      {map,'e@b',{node_key,e,b}},
      {map,'e@d',{node_key,e,d}},
      {map,'l@localhost',{node_key,l,localhost}},
-     {map,nonode@nohost,{node_key,nonode,nohost}}
+     {map,_testname,{node_key,test_node,_testdomain}}
     ] = lists:sort(ets:tab2list(epmdless_dist_node_registry_atoms)),
 
     [
      {map,{127,0,0,1},localhost}
+     |_
     ] = lists:sort(ets:tab2list(epmdless_dist_node_registry_addrs)),
 
+    [true, true, true] = 
     [
-     {map,"b",b},
-     {map,"d",d},
-     {map,"localhost",localhost},
-     {map,"nohost",nohost}
-    ] = lists:sort(ets:tab2list(epmdless_dist_node_registry_hosts)),
+     lists:member(M, ets:tab2list(epmdless_dist_node_registry_hosts))
+     || M <- [{map,"b",b},
+              {map,"d",d},
+              {map,"localhost",localhost}]
+    ],
 
     [
      {map,a,b},
@@ -63,7 +65,7 @@ register_node() ->
      {map,e,b},
      {map,e,d},
      {map,l,localhost},
-     {map,nonode,nohost}
+     {map,test_node,_testdomain}
     ] = lists:sort(ets:tab2list(epmdless_dist_node_registry_parts)).
 
 get_info() ->
@@ -111,12 +113,12 @@ list_nodes() ->
      {'e@d',{"d",3}},
      {'i@j',{{1,1,1,1},11111}},
      {'l@localhost',{{127,0,0,1},4}},
-     {nonode@nohost,{"nohost",undefined}}
+     {_testname,{_testhost,_testip}}
     ] = lists:sort(epmdless_client:?FUNCTION_NAME()).
 
 names() ->
     ['a@b', 'e@b'] = lists:sort(epmdless_client:?FUNCTION_NAME(b)),
     ['a@b', 'e@b'] = lists:sort(epmdless_client:?FUNCTION_NAME("b")),
     ['l@localhost'] = lists:sort(epmdless_client:?FUNCTION_NAME({127,0,0,1})),
-    [] = epmdless_client:?FUNCTION_NAME().
+    [_] = epmdless_client:?FUNCTION_NAME().
 

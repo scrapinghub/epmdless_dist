@@ -119,8 +119,7 @@ port_please(Name, Host, Timeout) ->
 
 
 names() ->
-    {ok, Host} = inet:gethostname(),
-    names(Host).
+    names(gethostname()).
 %% @doc
 %% List the Erlang nodes on a certain host.
 %% @end
@@ -131,8 +130,7 @@ names(Hostname) ->
 %% Dirty Extensions
 
 names_dirty() ->
-    {ok, Host} = inet:gethostname(),
-    names_dirty(Host).
+    names_dirty(gethostname()).
 
 names_dirty(Host) ->
     names_dirty(Host, whereis(?MODULE)).
@@ -242,11 +240,12 @@ init([]) ->
     {ok, #state{creation = rand:uniform(3)}}.
 
 handle_call({register_node, Name, DistPort, Family}, _From, State = #state{creation = Creation}) ->
-    %% In order to keep the init function lightweight,
-    %% let's insert preconfigured node here.
-    [addr_setter(insert_ignore(N), Family) || N <- [atom_to_node(node())|node_list()]],
+    NewState = State#state{name=Name, port=DistPort, family=Family},
+    handle_info(tuple_to_node({Name, gethostname(), DistPort}), NewState),
+    %% Let's insert preconfigured nodes in a another process.
+    spawn(fun() -> [?MODULE ! N || N = #node{key = #node_key{}} <- node_list()] end),
     error_logger:info_msg("Starting erlang distribution at port ~p~n", [DistPort]),
-    {reply, {ok, Creation}, State#state{name=Name, port=DistPort, family=Family}};
+    {reply, {ok, Creation}, NewState};
 
 handle_call(get_info, _From, State = #state{port = DistPort}) ->
     {reply, [{dist_port, DistPort}], State};
@@ -316,21 +315,19 @@ handle_call(Msg, _From, State) ->
     error_logger:error_msg("Unexpected message: ~p~n", [Msg]),
     {reply, {error, {bad_msg, Msg}}, State}.
 
-
 handle_cast({add_node, NodeName, Port}, State) when is_atom(NodeName) ->
     Node = atom_to_node(NodeName),
-    addr_setter(insert_ignore(Node#node{port = Port}), State#state.family),
-    {noreply, State};
+    handle_info(Node#node{port = Port}, State);
 
 handle_cast({add_node, NodeName, Addr, Port}, State) when is_atom(NodeName) andalso
                                                           is_tuple(Addr) ->
     Node = atom_to_node(NodeName),
+    % Since we have the IP address here, we don't spawn a process to acquire it.
     insert_ignore(Node#node{addr = Addr, port = Port}),
     {noreply, State};
 handle_cast({add_node, NodeName, Host, Port}, State) when is_atom(NodeName) ->
     Node = atom_to_node(NodeName),
-    addr_setter(insert_ignore(Node#node{host = Host, port = Port}), State#state.family),
-    {noreply, State};
+    handle_info(Node#node{host = Host, port = Port}, State);
 
 handle_cast({remove_node, NodeName}, State) when is_atom(NodeName) ->
     try
@@ -369,6 +366,11 @@ handle_cast({set_addr, Host, IPAddress, Domain}, State) ->
 handle_cast(Msg, State) ->
     error_logger:error_msg("Unexpected message: ~p~n", [Msg]),
     {noreply, State}.
+
+handle_info(Node, State) when is_record(Node, node) andalso
+                              is_record(Node#node.key, node_key) ->
+    addr_setter(insert_ignore(Node), State#state.family),
+    {noreply, State};
 
 handle_info(Msg, State) ->
     error_logger:error_msg("Unexpected message: ~p~n", [Msg]),
@@ -423,7 +425,8 @@ insert_ignore(Node = #node{ key = NK, addr = Addr, host = Host, port = Port}) ->
         % ignore if Address, Host and Port match
         [#node{addr = Addr, host = Host, port = Port}] -> false;
         % update Port if Address and Host match
-        [#node{addr = Addr, host = Host}] ->
+        [#node{addr = Addr1, host = Host}] when Addr == undefined orelse
+                                                Addr == Addr1 ->
             true = ets:insert(?REGISTRY, Node);
         % update Address and Host if only Port matches
         [#node{addr = A, host = H, port = Port}] ->
@@ -532,3 +535,12 @@ join_list(_Chr, [Atom]) when is_atom(Atom) -> atom_to_list(Atom);
 join_list(Char, [Head|Tail]) ->
     join_list(Char, [Head]) ++ [Char|join_list(Char, Tail)].
 
+gethostname() ->
+    case inet_udp:open(0,[]) of
+	{ok,U} ->
+	    {ok,Res} = inet:gethostname(U),
+	    inet_udp:close(U),
+	    Res;
+	_ ->
+	    "nohost.nodomain"
+    end.
