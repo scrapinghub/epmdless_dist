@@ -13,11 +13,8 @@
          register_node/2, register_node/3,
          port_please/2, port_please/3,
          names/0, names/1]).
--export([names_dirty/0, names_dirty/1]).
 %% auxiliary extensions
--export([get_info/0, node_please/1, host_please/1]).
-%% dirty auxiliary extensions
--export([node_please_dirty/1]).
+-export([get_info/0, host_please/1,  node_please/1, local_part/1]).
 %% node maintenance functions
 -export([add_node/2, add_node/3, remove_node/1, list_nodes/0]).
 %% gen_server callbacks
@@ -120,37 +117,23 @@ port_please(Name, Host, Timeout) ->
 
 names() ->
     names(gethostname()).
+
 %% @doc
 %% List the Erlang nodes on a certain host.
 %% @end
-names(Hostname) ->
-    gen_server:call(?MODULE, {?FUNCTION_NAME, Hostname}, infinity).
-
-
-%% Dirty Extensions
-
-names_dirty() ->
-    names_dirty(gethostname()).
-
-names_dirty(Host) ->
-    names_dirty(Host, whereis(?MODULE)).
-
-names_dirty(_Host, undefined) -> undefined;
-names_dirty(Domain, EpmdClientPid) when is_pid(EpmdClientPid)
-                                        andalso is_atom(Domain) ->
+names(Domain) when is_atom(Domain) ->
     NodeKey = #node_key{local_part='_', domain=Domain},
     MatchSpec = [{?NODE_MATCH(NodeKey), [], ['$3']}],
     ets:select(?REGISTRY, MatchSpec);
-names_dirty(IP, EpmdClientPid) when is_pid(EpmdClientPid) andalso
-                                    is_tuple(IP) ->
+names(IP) when is_tuple(IP) ->
     try ets:lookup_element(?REG_ADDR, IP, #map.value) of
-        Domain -> names_dirty(Domain, EpmdClientPid)
+        Domain -> names(Domain)
     catch
         error:badarg -> []
     end;
-names_dirty(Host, EpmdClientPid) when is_pid(EpmdClientPid) ->
+names(Host) ->
     try ets:lookup_element(?REG_HOST, Host, #map.value) of
-        Domain -> names_dirty(Domain, EpmdClientPid)
+        Domain -> names(Domain)
     catch
         error:badarg -> []
     end.
@@ -168,20 +151,10 @@ get_info() ->
 host_please(Node) ->
     gen_server:call(?MODULE, {?FUNCTION_NAME, Node}, infinity).
 
--spec node_please(LocalPart) -> {node, Node} | nonode when
+-spec node_please(LocalPart) -> Node | undefined when
       LocalPart :: atom(),
       Node :: atom().
 node_please(LocalPart) ->
-    gen_server:call(?MODULE, {?FUNCTION_NAME, LocalPart}, infinity).
-
-
-%% dirty auxiliary extensions
-
-node_please_dirty(LocalPart) ->
-    node_please_dirty(LocalPart, whereis(?MODULE)).
-
-node_please_dirty(_LocalPart, undefined) -> undefined;
-node_please_dirty(LocalPart, EpmdClientPid) when is_pid(EpmdClientPid) ->
     case ets:member(?REG_ATOM, LocalPart) of
         % This means we got a NodeName instead of LocalPart,
         % so we'll just send it back.
@@ -200,6 +173,14 @@ node_please_dirty(LocalPart, EpmdClientPid) when is_pid(EpmdClientPid) ->
             end
     end.
 
+-spec local_part(NodeName) -> LocalPart | undefined when
+      NodeName :: atom(),
+      LocalPart :: atom().
+local_part(NodeName) ->
+    case ets:lookup(?REG_ATOM, NodeName) of
+        [#map{value=NK}] -> NK#node_key.local_part;
+        [] -> undefined
+    end.
 
 %% node maintenance functions
 
@@ -250,10 +231,6 @@ handle_call({register_node, Name, DistPort, Family}, _From, State = #state{creat
 handle_call(get_info, _From, State = #state{port = DistPort}) ->
     {reply, [{dist_port, DistPort}], State};
 
-handle_call({node_please, LocalPart}, _From, State) when is_atom(LocalPart) ->
-    Reply = node_please_dirty(LocalPart, self()),
-    {reply, Reply, State};
-
 handle_call({host_please, Node}, _From, State) when is_atom(Node) ->
     Reply =
     try
@@ -290,10 +267,6 @@ handle_call(list_nodes, _From, State) ->
     MatchSpec = [{?NODE_MATCH(NodeKey), [{'==', undefined, '$5'}], [ResultHost]},
                  {?NODE_MATCH(NodeKey), [{'/=', undefined, '$5'}], [ResultAddr]}],
     Reply = ets:select(?REGISTRY, MatchSpec),
-    {reply, Reply, State};
-
-handle_call({names, Host}, _From, State) ->
-    Reply = names_dirty(Host, self()),
     {reply, Reply, State};
 
 handle_call({add_node, NodeName, Port}, _From, State) when is_atom(NodeName) ->
@@ -336,7 +309,7 @@ handle_cast({remove_node, NodeName}, State) when is_atom(NodeName) ->
         {NodeKey, Addr, Host}
     of
         {NK = #node_key{domain = Domain}, A, H} ->
-            true = case names_dirty(Domain, self()) of
+            true = case names(Domain) of
                        % Only delete the address and host mapping
                        % if there're no other nodes with the same domain.
                        [] ->
@@ -430,7 +403,7 @@ insert_ignore(Node = #node{ key = NK, addr = Addr, host = Host, port = Port}) ->
             true = ets:insert(?REGISTRY, Node);
         % update Address and Host if only Port matches
         [#node{addr = A, host = H, port = Port}] ->
-            true = case names_dirty(NK#node_key.domain, self()) of
+            true = case names(NK#node_key.domain) of
                        % Only delete the host mapping
                        % if there're no other nodes with the same domain.
                        [] ->

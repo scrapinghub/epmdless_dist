@@ -17,6 +17,7 @@ proxy_manager_test_() ->
         {"register_node", fun register_node/0},
         {"get_info", fun get_info/0},
         {"node_please", fun node_please/0},
+        {"local_part", fun local_part/0},
         {"host_please", fun host_please/0},
         {"port_please", fun port_please/0},
         {"add_node", fun add_node/0},
@@ -77,6 +78,11 @@ node_please() ->
     %% should return undefined
     undefined = epmdless_client:?FUNCTION_NAME(non_existent).
 
+local_part() ->
+    a = epmdless_client:?FUNCTION_NAME('a@d'),
+    l = epmdless_client:?FUNCTION_NAME('l@localhost'),
+    %% should return undefined
+    undefined = epmdless_client:?FUNCTION_NAME(non_existent).
 
 host_please() ->
     nohost = epmdless_client:?FUNCTION_NAME('not@exists'),
