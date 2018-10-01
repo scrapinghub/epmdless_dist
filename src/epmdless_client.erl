@@ -235,9 +235,11 @@ handle_call({host_please, Node}, _From, State) when is_atom(Node) ->
     Reply =
     try
         NodeKey = ets:lookup_element(?REG_ATOM, Node, #map.value),
-        ets:lookup_element(?REGISTRY, NodeKey, #node.host)
+        ets:lookup(?REGISTRY, NodeKey)
     of
-        Host -> {host, Host}
+        [#node{addr=Addr}] when is_tuple(Addr) -> {host, Addr};
+        [#node{host=Host}] when is_list(Host) -> {host, Host};
+        _ -> nohost
     catch
         error:badarg ->
             error_logger:info_msg("No host found for node ~p~n", [Node]),

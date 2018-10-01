@@ -86,6 +86,7 @@ local_part() ->
 
 host_please() ->
     nohost = epmdless_client:?FUNCTION_NAME('not@exists'),
+    {host, {127,0,0,1}} = epmdless_client:?FUNCTION_NAME('l@localhost'),
     {host, "b"} = epmdless_client:?FUNCTION_NAME('a@b').
 
 port_please() ->
