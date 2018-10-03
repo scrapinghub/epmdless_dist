@@ -166,8 +166,8 @@ node_please(LocalPart) ->
                                        #node_key{local_part=LocalPart, domain=Domain},
                                        #node.name_atom);
                 Domains when is_list(Domains) ->
-                    {_Ts, NodeAtom} = lookup_last_added_node(LocalPart, Domains),
-                    NodeAtom
+                    {_Ts, Node} = lookup_last_added_node(LocalPart, Domains),
+                    Node#node.name_atom
             catch
                 error:badarg -> undefined
             end
@@ -253,7 +253,7 @@ handle_call({port_please, LocalPart, Host}, From, State)
 handle_call({port_please, LocalPart, Host}, _From, State = #state{version = Version})
   when is_atom(LocalPart) ->
     Reply =
-    try lookup_port(LocalPart, Host) of
+    try lookup_port(LocalPart, Host, State#state.family) of
         Port -> {port, Port, Version}
     catch
         error:badarg ->
@@ -325,14 +325,14 @@ handle_cast({remove_node, NodeName}, State) when is_atom(NodeName) ->
     end,
     {noreply, State};
 
-handle_cast({set_addr, Host, error, PosixError}, State) ->
-    error_logger:info_msg("No IP found for ~p due to ~p~n", [Host, PosixError]),
+handle_cast({set_addr, #node_key{domain = D}, {error, PosixError}}, State) ->
+    error_logger:info_msg("No IP found for ~p due to ~p~n", [D, PosixError]),
     {noreply, State};
-handle_cast({set_addr, Host, IPAddress, Domain}, State) ->
-    ets:insert_new(?REG_ADDR, #map{key=IPAddress, value=Domain}),
+handle_cast({set_addr, NK = #node_key{domain = D}, {ok, IPAddress}}, State) ->
+    ets:insert_new(?REG_ADDR, #map{key=IPAddress, value=D}),
     AddrMS = ets:fun2ms(
-                fun (N = #node{addr = A, host = H}) when H == Host andalso
-                                                         A /= IPAddress ->
+                fun(N = #node{key = K, addr = A}) when K == NK andalso
+                                                       A /= IPAddress ->
                         N#node{addr = IPAddress}
                 end),
     ets:select_replace(?REGISTRY, AddrMS),
@@ -365,30 +365,43 @@ code_change(_Old, State, _Extra) ->
 
 %% internal functions
 
-lookup_port(LocalPart, Domain) when is_atom(Domain) ->
+
+lookup_port(LocalPart, Domain, _AddressFamily) when is_atom(Domain) ->
     NodeKey =
     case ets:lookup(?REG_ATOM, LocalPart) of
         [#map{value=Value}] -> Value;
         [] -> #node_key{local_part=LocalPart, domain=Domain}
     end,
     ets:lookup_element(?REGISTRY, NodeKey, #node.port);
-lookup_port(LocalPart, IP) when is_tuple(IP) ->
-    Domain = ets:lookup_element(?REG_ADDR, IP, #map.value),
-    lookup_port(LocalPart, Domain);
-lookup_port(LocalPart, Host) ->
+lookup_port(LocalPart, IP, AddressFamily) when is_tuple(IP) ->
+    try ets:lookup_element(?REG_ADDR, IP, #map.value) of
+        Domain -> lookup_port(LocalPart, Domain, AddressFamily)
+    catch
+        error:badarg ->
+            NodeMs = ?NODE_MATCH(#node_key{local_part=LocalPart, domain='_'}),
+            [ addr_setter(N, AddressFamily)
+              || N <- ets:match_object(?REGISTRY, NodeMs#node{addr=undefined}) ],
+            lookup_port(LocalPart)
+    end;
+lookup_port(LocalPart, Host, AddressFamily) ->
     Domain =
     case ets:lookup(?REG_HOST, Host) of
         [#map{value=Value}] -> Value;
         [] -> list_to_atom(Host)
     end,
-    lookup_port(LocalPart, Domain).
+    lookup_port(LocalPart, Domain, AddressFamily).
+
+lookup_port(LocalPart) ->
+    Domains = ets:lookup_element(?REG_PART, LocalPart, #map.value),
+    {_, Node} = lookup_last_added_node(LocalPart, Domains),
+    Node#node.port.
 
 
 lookup_last_added_node(LocalPart, Domains) ->
     lists:foldl(
       fun(Domain, {Max, _NodeAtom} = Acc) ->
               case ets:lookup(?REGISTRY, #node_key{local_part=LocalPart, domain=Domain}) of
-                  [#node{added_ts=Ts, name_atom=NA}] when Max < Ts -> {Ts, NA};
+                  [#node{added_ts=Ts} = N] when Max < Ts -> {Ts, N};
                   [#node{}] -> Acc
               end
       end,
@@ -482,17 +495,11 @@ node_from_node_key(NK = #node_key{local_part = LP, domain = D},
     N#node{added_ts = erlang:system_time(microsecond),
            key = NK}.
 
-addr_setter(#node{ key = #node_key{ domain = Domain }, host = Host }, AddressFamily) ->
-    spawn(fun() -> set_addr(Host, AddressFamily, Domain) end).
-
-set_addr(Host, AddressFamily, Domain) ->
-    case inet:getaddr(Host, AddressFamily) of
-        {ok, IPAddress} ->
-            gen_server:cast(?MODULE, {?FUNCTION_NAME, Host, IPAddress, Domain});
-        {error, PosixError} ->
-            gen_server:cast(?MODULE, {?FUNCTION_NAME, Host, error, PosixError}) 
-    end.
-
+addr_setter(#node{ key = NK, host = Host }, AddressFamily) ->
+    spawn(
+      fun() ->
+        gen_server:cast(?MODULE, {set_addr, NK, inet:getaddr(Host, AddressFamily)})
+      end).
 
 get_os_env(App, EnvKey) ->
     get_os_env(join_list($_, [App, EnvKey])).
