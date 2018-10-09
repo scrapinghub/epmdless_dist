@@ -518,11 +518,16 @@ join_list(Char, [Head|Tail]) ->
     join_list(Char, [Head]) ++ [Char|join_list(Char, Tail)].
 
 gethostname() ->
-    case inet_udp:open(0,[]) of
-	{ok,U} ->
-	    {ok,Res} = inet:gethostname(U),
-	    inet_udp:close(U),
-	    Res;
-	_ ->
-	    "nohost.nodomain"
+    % Crawlera specific environment vars
+    case os:getenv("HOST", os:getenv("HOSTNAME")) of
+        false ->
+            case inet_udp:open(0,[]) of
+                {ok,U} ->
+                    {ok,Res} = inet:gethostname(U),
+                    inet_udp:close(U),
+                    Res;
+                _ ->
+                    "nohost.nodomain"
+            end;
+        Host -> Host
     end.
