@@ -14,7 +14,7 @@
 
 -export([child_spec/0]).
 %% erl_epmd callbacks
--export([start/0, start_link/3, stop/1,
+-export([start/3, start_link/3, stop/1,
          register_node/3, register_node/4,
          port_please/2, port_please/3, port_please/4,
          names/1, names/2]).
@@ -105,8 +105,8 @@ child_spec() ->
 
 % erl_epmd API
 
-start() ->
-    gen_server:start(?MODULE, [], []).
+start(Name, DistPort, Family) ->
+    gen_server:start(?MODULE, [Name, DistPort, Family], []).
 
 start_link(Name, DistPort, Family) ->
     gen_server:start_link(?MODULE, [Name, DistPort, Family], []).
