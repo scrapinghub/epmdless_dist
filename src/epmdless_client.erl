@@ -32,10 +32,8 @@
          handle_info/2,
          terminate/2,
          code_change/3]).
--ifdef(TEST).
-%% Testing purposes
+%% Utility function
 -export([gethostname/1]).
--endif.
 
 -define(APP, epmdless_dist).
 -define(MOD(F), case F of inet -> inet_tcp; inet6 -> inet6_tcp end).
@@ -434,6 +432,7 @@ lookup_port(Pid, LocalPart, Addr, S = #state{family = F}) when is_tuple(Addr) ->
                   handle_cast({insert, Verification}, S),
                   Verification
               end || Node = #node{key = #node_key{local_part = LP}} <- node_list(),
+                     not ets:member(?REG_PART(F), LP),
                      Verification <- [verify_port(set_address(Node, M), M)],
                      LP == LocalPart],
             case [N || N = #node{addr = A} <- NewDiscoveries, A == Addr] of
