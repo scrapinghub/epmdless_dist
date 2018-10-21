@@ -21,7 +21,7 @@
 %% auxiliary extensions
 -export([get_info/1, host_please/2,
          node_please/2, local_part/2,
-         family/1]).
+         driver/1]).
 %% node maintenance functions
 -export([add_node/3, add_node/4,
          remove_node/2, list_nodes/1]).
@@ -36,22 +36,26 @@
 -export([gethostname/1]).
 
 -define(APP, epmdless_dist).
--define(MOD(F), case F of inet -> inet_tcp; inet6 -> inet6_tcp end).
--define(FAM(M), case M of inet_tcp -> inet; inet6_tcp -> inet6 end).
--define(REGISTRY(F), case F of inet  -> epmdless_inet;
-                               inet6 -> epmdless_inet6
+
+-define(REGISTRY(D), case D of inet_tcp  -> epmdless_inet;
+                               eless_tcp -> epmdless_eless;
+                               inet6_tcp -> epmdless_inet6
                      end).
--define(REG_ATOM(F), case F of inet  -> epmdless_inet_atoms;
-                               inet6 -> epmdless_inet6_atoms
+-define(REG_ATOM(D), case D of inet_tcp  -> epmdless_inet_atoms;
+                               eless_tcp -> epmdless_eless_atoms;
+                               inet6_tcp -> epmdless_inet6_atoms
                      end).
--define(REG_ADDR(F), case F of inet  -> epmdless_inet_addrs;
-                               inet6 -> epmdless_inet6_addrs
+-define(REG_ADDR(D), case D of inet_tcp  -> epmdless_inet_addrs;
+                               eless_tcp -> epmdless_eless_addrs;
+                               inet6_tcp -> epmdless_inet6_addrs
                      end).
--define(REG_HOST(F), case F of inet  -> epmdless_inet_hosts;
-                               inet6 -> epmdless_inet6_hosts
+-define(REG_HOST(D), case D of inet_tcp  -> epmdless_inet_hosts;
+                               eless_tcp -> epmdless_eless_hosts;
+                               inet6_tcp -> epmdless_inet6_hosts
                      end).
--define(REG_PART(F), case F of inet  -> epmdless_inet_parts;
-                               inet6 -> epmdless_inet6_parts
+-define(REG_PART(D), case D of inet_tcp  -> epmdless_inet_parts;
+                               eless_tcp -> epmdless_eless_parts;
+                               inet6_tcp -> epmdless_inet6_parts
                      end).
 
 -define(ETS_OPTS(Type, KeyIdx), [Type, protected, named_table,
@@ -89,7 +93,7 @@
     creation :: 1|2|3,
     name   :: atom(),
     port   :: inet:port_number(),
-    family :: atom(),
+    driver :: atom(),
     version = 5
 }).
 
@@ -103,11 +107,11 @@ child_spec() ->
 
 % erl_epmd API
 
-start(Name, DistPort, Family) ->
-    gen_server:start(?MODULE, [Name, DistPort, Family], []).
+start(Name, DistPort, Driver) ->
+    gen_server:start(?MODULE, [Name, DistPort, Driver], []).
 
-start_link(Name, DistPort, Family) ->
-    gen_server:start_link(?MODULE, [Name, DistPort, Family], []).
+start_link(Name, DistPort, Driver) ->
+    gen_server:start_link(?MODULE, [Name, DistPort, Driver], []).
 
 stop(Pid) ->
     gen_server:call(Pid, stop, infinity).
@@ -116,18 +120,14 @@ stop(Pid) ->
 register_node(Pid, Name, PortNo) ->
     register_node(Pid, Name, PortNo, inet).
 
--spec register_node(Pid, Name, Port, Family) -> {ok, CreationId} when
+-spec register_node(Pid, Name, Port, Driver) -> {ok, CreationId} when
       Pid        :: pid(),
       Name       :: atom(),
       Port       :: inet:port_number(),
-      Family     :: atom(),
+      Driver     :: atom(),
       CreationId :: 1..3.
-register_node(Pid, Name, PortNo, inet_tcp) ->
-    register_node(Pid, Name, PortNo, inet);
-register_node(Pid, Name, PortNo, inet6_tcp) ->
-    register_node(Pid, Name, PortNo, inet6);
-register_node(Pid, Name, Port, Family) ->
-    gen_server:call(Pid, {?FUNCTION_NAME, Name, Port, Family}, infinity).
+register_node(Pid, Name, Port, Driver) ->
+    gen_server:call(Pid, {?FUNCTION_NAME, Name, Port, Driver}, infinity).
 
 port_please(Pid, Node) ->
     port_please(Pid, Node, undefined).
@@ -149,27 +149,27 @@ port_please(Pid, Name, Host, Timeout) ->
     gen_server:call(Pid, {?FUNCTION_NAME, Name, Host}, Timeout).
 
 
-names(F) ->
-    names(undefined, F).
+names(D) ->
+    names(undefined, D).
 
 %% @doc
 %% List the Erlang nodes on a certain host.
 %% @end
-names(undefined, F) ->
-    names(gethostname(F), F);
-names(Domain, F) when is_atom(Domain) ->
+names(undefined, D) ->
+    names(gethostname(D), D);
+names(Domain, D) when is_atom(Domain) ->
     NodeKey = #node_key{local_part='_', domain=Domain},
     MatchSpec = [{?NODE_MATCH(NodeKey), [], ['$3']}],
-    ets:select(?REGISTRY(F), MatchSpec);
-names(Addr, F) when is_tuple(Addr) ->
-    try ets:lookup_element(?REG_ADDR(F), Addr, #map.value) of
-        Domain -> names(Domain, F)
+    ets:select(?REGISTRY(D), MatchSpec);
+names(Addr, D) when is_tuple(Addr) ->
+    try ets:lookup_element(?REG_ADDR(D), Addr, #map.value) of
+        Domain -> names(Domain, D)
     catch
         error:badarg -> []
     end;
-names(Host, F) ->
-    try ets:lookup_element(?REG_HOST(F), Host, #map.value) of
-        Domain -> names(Domain, F)
+names(Host, D) ->
+    try ets:lookup_element(?REG_HOST(D), Host, #map.value) of
+        Domain -> names(Domain, D)
     catch
         error:badarg -> []
     end.
@@ -189,35 +189,35 @@ get_info(Pid) ->
 host_please(Pid, Node) ->
     gen_server:call(Pid, {?FUNCTION_NAME, Node}, infinity).
 
--spec node_please(LocalPart, F) -> Node | undefined when
+-spec node_please(LocalPart, D) -> Node | undefined when
       LocalPart :: atom(),
-      F :: inet|inet6,
+      D :: atom(),
       Node :: atom().
-node_please(LocalPart, F) ->
-    case ets:member(?REG_ATOM(F), LocalPart) of
+node_please(LocalPart, D) ->
+    case ets:member(?REG_ATOM(D), LocalPart) of
         % This means we got a NodeName instead of LocalPart,
         % so we'll just send it back.
         true -> LocalPart;
         false ->
-            try ets:lookup_element(?REG_PART(F), LocalPart, #map.value) of
+            try ets:lookup_element(?REG_PART(D), LocalPart, #map.value) of
                 [Domain] ->
-                    ets:lookup_element(?REGISTRY(F),
+                    ets:lookup_element(?REGISTRY(D),
                                        #node_key{local_part=LocalPart, domain=Domain},
                                        #node.name_atom);
                 Domains when is_list(Domains) ->
-                    {_Ts, Node} = lookup_last_added_node(LocalPart, Domains, F),
+                    {_Ts, Node} = lookup_last_added_node(LocalPart, Domains, D),
                     Node#node.name_atom
             catch
                 error:badarg -> undefined
             end
     end.
 
--spec local_part(NodeName, F) -> LocalPart | undefined when
+-spec local_part(NodeName, D) -> LocalPart | undefined when
       NodeName :: atom(),
-      F :: inet|inet6,
+      D :: atom(),
       LocalPart :: atom().
-local_part(NodeName, F) ->
-    case ets:lookup(?REG_ATOM(F), NodeName) of
+local_part(NodeName, D) ->
+    case ets:lookup(?REG_ATOM(D), NodeName) of
         [#map{value=NK}] -> NK#node_key.local_part;
         [] -> undefined
     end.
@@ -253,36 +253,36 @@ remove_node(Pid, Node) ->
 list_nodes(Pid) ->
     gen_server:call(Pid, ?FUNCTION_NAME, infinity).
 
--spec family(Pid) -> Family when
+-spec driver(Pid) -> Driver when
       Pid    :: pid(),
-      Family :: inet|inet6.
-family(Pid) ->
+      Driver :: atom().
+driver(Pid) ->
     gen_server:call(Pid, ?FUNCTION_NAME, infinity).
 
 %% gen_server callbacks
 
-init([Name, DistPort, Family = F]) ->
-    ets:new(?REGISTRY(F), ?ETS_OPTS(set, #node.key)),
-    ets:new(?REG_ATOM(F), ?ETS_OPTS(set, #map.key)),
-    ets:new(?REG_ADDR(F), ?ETS_OPTS(set, #map.key)),
-    ets:new(?REG_HOST(F), ?ETS_OPTS(set, #map.key)),
-    ets:new(?REG_PART(F), ?ETS_OPTS(bag, #map.key)),
+init([Name, DistPort, Driver = D]) ->
+    ets:new(?REGISTRY(D), ?ETS_OPTS(set, #node.key)),
+    ets:new(?REG_ATOM(D), ?ETS_OPTS(set, #map.key)),
+    ets:new(?REG_ADDR(D), ?ETS_OPTS(set, #map.key)),
+    ets:new(?REG_HOST(D), ?ETS_OPTS(set, #map.key)),
+    ets:new(?REG_PART(D), ?ETS_OPTS(bag, #map.key)),
     error_logger:info_msg("Starting erlang distribution at port ~p~n", [DistPort]),
     self() ! timeout,
-    {ok, #state{creation = rand:uniform(3), name=Name, port=DistPort, family=Family}}.
+    {ok, #state{creation = rand:uniform(3), name=Name, port=DistPort, driver=Driver}}.
 
-handle_call({register_node, Name, DistPort, Family}, _From, State = #state{creation = Creation}) ->
-    {_, NewState} = handle_cast({register_node, Name, DistPort, Family}, State),
+handle_call({register_node, Name, DistPort, Driver}, _From, State = #state{creation = Creation}) ->
+    {_, NewState} = handle_cast({register_node, Name, DistPort, Driver}, State),
     {reply, {ok, Creation}, NewState};
 
 handle_call(get_info, _From, State = #state{port = DistPort}) ->
     {reply, [{dist_port, DistPort}], State};
 
-handle_call({host_please, Node}, _From, State = #state{family = F}) when is_atom(Node) ->
+handle_call({host_please, Node}, _From, State = #state{driver = D}) when is_atom(Node) ->
     Reply =
     try
-        NodeKey = ets:lookup_element(?REG_ATOM(F), Node, #map.value),
-        ets:lookup(?REGISTRY(F), NodeKey)
+        NodeKey = ets:lookup_element(?REG_ATOM(D), Node, #map.value),
+        ets:lookup(?REGISTRY(D), NodeKey)
     of
         [#node{addr=Addr}] when is_tuple(Addr) -> {host, Addr};
         [#node{host=Host}] when is_list(Host) -> {host, Host};
@@ -309,13 +309,13 @@ handle_call({port_please, LocalPart, Host}, _From, State = #state{version = Vers
     end,
     {reply, Reply, State};
 
-handle_call(list_nodes, _From, State = #state{family = F}) ->
+handle_call(list_nodes, _From, State = #state{driver = D}) ->
     ResultHost = {{'$3', {{'$4', '$1'}}}},
     ResultAddr = {{'$3', {{'$5', '$1'}}}},
     NodeKey = #node_key{local_part='_', domain='_'},
     MatchSpec = [{?NODE_MATCH(NodeKey), [{'==', undefined, '$5'}], [ResultHost]},
                  {?NODE_MATCH(NodeKey), [{'/=', undefined, '$5'}], [ResultAddr]}],
-    Reply = ets:select(?REGISTRY(F), MatchSpec),
+    Reply = ets:select(?REGISTRY(D), MatchSpec),
     {reply, Reply, State};
 
 handle_call({add_node, NodeName, Port}, _From, State) when is_atom(NodeName) ->
@@ -333,27 +333,27 @@ handle_call({remove_node, NodeName}, _From, State) when is_atom(NodeName) ->
 handle_call(stop, _From, State) ->
     {stop, shutdown, ok, State};
 
-handle_call(family, _From, State) ->
-    {reply, State#state.family, State};
+handle_call(driver, _From, State) ->
+    {reply, State#state.driver, State};
 
 handle_call(Msg, _From, State) ->
     error_logger:error_msg("Unexpected message: ~p~n", [Msg]),
     {reply, {error, {bad_msg, Msg}}, State}.
 
-handle_cast({register_node, Name, DistPort, Family}, State = #state{family = Family}) ->
-    handle_info(tuple_to_node({Name, gethostname(Family), DistPort}), State);
+handle_cast({register_node, Name, DistPort, Driver}, State = #state{driver = Driver}) ->
+    handle_info(tuple_to_node({Name, gethostname(Driver), DistPort}), State);
 
 handle_cast({add_node, NodeName, Port}, State) when is_atom(NodeName) ->
     Node = atom_to_node(NodeName),
     handle_info(Node#node{port = Port}, State);
 
-handle_cast({add_node, NodeName, Addr, Port}, State = #state{family = inet})
-  when is_atom(NodeName) andalso is_tuple(Addr) andalso size(Addr) == 4 ->
+handle_cast({add_node, NodeName, Addr, Port}, State = #state{driver = inet6_tcp})
+  when is_atom(NodeName) andalso is_tuple(Addr) andalso size(Addr) == 8 ->
     Node = atom_to_node(NodeName),
     % We have the IP address here, we still spawn a process to check the port.
     handle_info(Node#node{addr = Addr, port = Port}, State);
-handle_cast({add_node, NodeName, Addr, Port}, State = #state{family = inet6})
-  when is_atom(NodeName) andalso is_tuple(Addr) andalso size(Addr) == 8 ->
+handle_cast({add_node, NodeName, Addr, Port}, State = #state{driver = _})
+  when is_atom(NodeName) andalso is_tuple(Addr) andalso size(Addr) == 4 ->
     Node = atom_to_node(NodeName),
     % We have the IP address here, we still spawn a process to check the port.
     handle_info(Node#node{addr = Addr, port = Port}, State);
@@ -365,11 +365,11 @@ handle_cast({add_node, NodeName, Host, Port}, State)
 
 handle_cast({remove_node, NodeName}, State) when is_list(NodeName) ->
     handle_cast({remove_node, list_to_atom(NodeName)}, State);
-handle_cast({remove_node, NodeName}, State = #state{family = F}) when is_atom(NodeName) ->
+handle_cast({remove_node, NodeName}, State = #state{driver = F}) when is_atom(NodeName) ->
     do_remove_node(NodeName, F),
     {noreply, State};
 
-handle_cast({insert, N = #node{key=#node_key{}}}, State = #state{family = F}) ->
+handle_cast({insert, N = #node{key=#node_key{}}}, State = #state{driver = F}) ->
     insert_ignore(N, F),
     {noreply, State};
 handle_cast({insert, {Error, {EAddr, EPort}}}, State) ->
@@ -391,20 +391,20 @@ handle_info(timeout, State) ->
        || Node = #node{key = #node_key{}} <- node_list() ],
      {noreply, State};
 
-handle_info(Node = #node{key=#node_key{}}, State = #state{family = F}) ->
-    verify_insert(self(), Node, F),
+handle_info(Node = #node{key=#node_key{}}, State = #state{driver = D}) ->
+    verify_insert(self(), Node, D),
     {noreply, State};
 
 handle_info(Msg, State) ->
     error_logger:error_msg("Unexpected message: ~p~n", [Msg]),
     {noreply, State}.
 
-terminate(_Reason, _State = #state{family=F}) ->
-    ets:delete(?REGISTRY(F)),
-    ets:delete(?REG_ATOM(F)),
-    ets:delete(?REG_ADDR(F)),
-    ets:delete(?REG_HOST(F)),
-    ets:delete(?REG_PART(F)),
+terminate(_Reason, _State = #state{driver=D}) ->
+    ets:delete(?REGISTRY(D)),
+    ets:delete(?REG_ATOM(D)),
+    ets:delete(?REG_ADDR(D)),
+    ets:delete(?REG_HOST(D)),
+    ets:delete(?REG_PART(D)),
     ok.
 
 code_change(_Old, State, _Extra) ->
@@ -414,26 +414,25 @@ code_change(_Old, State, _Extra) ->
 %% internal functions
 
 
-lookup_port(_Pid, LocalPart, Domain, #state{family = F}) when is_atom(Domain) ->
+lookup_port(_Pid, LocalPart, Domain, #state{driver = D}) when is_atom(Domain) ->
     NodeKey =
-    case ets:lookup(?REG_ATOM(F), LocalPart) of
+    case ets:lookup(?REG_ATOM(D), LocalPart) of
         [#map{value=Value}] -> Value;
         [] -> #node_key{local_part=LocalPart, domain=Domain}
     end,
-    ets:lookup_element(?REGISTRY(F), NodeKey, #node.port);
-lookup_port(Pid, LocalPart, Addr, S = #state{family = F}) when is_tuple(Addr) ->
-    try ets:lookup_element(?REG_ADDR(F), Addr, #map.value) of
+    ets:lookup_element(?REGISTRY(D), NodeKey, #node.port);
+lookup_port(Pid, LocalPart, Addr, S = #state{driver = D}) when is_tuple(Addr) ->
+    try ets:lookup_element(?REG_ADDR(D), Addr, #map.value) of
         Domain -> lookup_port(Pid, LocalPart, Domain, S)
     catch
         error:badarg ->
-            M = ?MOD(F),
             NewDiscoveries =
             [ begin
                   handle_cast({insert, Verification}, S),
                   Verification
               end || Node = #node{key = #node_key{local_part = LP}} <- node_list(),
-                     not ets:member(?REG_PART(F), LP),
-                     Verification <- [verify_port(set_address(Node, M), M)],
+                     not ets:member(?REG_PART(D), LP),
+                     Verification <- [verify_port(set_address(Node, D), D)],
                      LP == LocalPart],
             case [N || N = #node{addr = A} <- NewDiscoveries, A == Addr] of
                 [#node{port=Port}] -> Port;
@@ -443,19 +442,19 @@ lookup_port(Pid, LocalPart, Addr, S = #state{family = F}) when is_tuple(Addr) ->
                 [_|_] -> error(badarg)
             end
     end;
-lookup_port(Pid, LocalPart, Host, S = #state{family = F}) ->
+lookup_port(Pid, LocalPart, Host, S = #state{driver = D}) ->
     Domain =
-    case ets:lookup(?REG_HOST(F), Host) of
+    case ets:lookup(?REG_HOST(D), Host) of
         [#map{value=Value}] -> Value;
         [] -> list_to_atom(Host)
     end,
     lookup_port(Pid, LocalPart, Domain, S).
 
 
-lookup_last_added_node(LocalPart, Domains, F) ->
+lookup_last_added_node(LocalPart, Domains, D) ->
     lists:foldl(
       fun(Domain, {Max, _NodeAtom} = Acc) ->
-              case ets:lookup(?REGISTRY(F), #node_key{local_part=LocalPart, domain=Domain}) of
+              case ets:lookup(?REGISTRY(D), #node_key{local_part=LocalPart, domain=Domain}) of
                   [#node{added_ts=Ts} = N] when Max < Ts -> {Ts, N};
                   [#node{}] -> Acc
               end
@@ -463,60 +462,60 @@ lookup_last_added_node(LocalPart, Domains, F) ->
       {0, undefined},
       Domains).
 
-insert_ignore(Node = #node{ key = NK, addr = Addr, host = Host, port = Port}, F) ->
-    case ets:lookup(?REGISTRY(F), NK) of
+insert_ignore(Node = #node{ key = NK, addr = Addr, host = Host, port = Port}, D) ->
+    case ets:lookup(?REGISTRY(D), NK) of
         % ignore if Address, Host and Port match
         [#node{addr = Addr, host = Host, port = Port}] -> false;
         % update Port if Address and Host match
         [#node{addr = Addr1, host = Host}] when Addr == undefined orelse
                                                 Addr == Addr1 ->
-            true = ets:insert(?REGISTRY(F), Node);
+            true = ets:insert(?REGISTRY(D), Node);
         % update Address and Host if only Port matches
         [#node{addr = A, host = H, port = Port}] ->
-            true = case names(NK#node_key.domain, F) of
+            true = case names(NK#node_key.domain, D) of
                        % Only delete the host mapping
                        % if there're no other nodes with the same domain.
                        [] ->
-                           ets:delete(?REG_ADDR(F), A),
-                           ets:delete(?REG_HOST(F), H);
+                           ets:delete(?REG_ADDR(D), A),
+                           ets:delete(?REG_HOST(D), H);
                        _ -> true
                    end,
             case is_tuple(Addr) of
-                true -> true = ets:insert(?REG_ADDR(F), #map{key=Addr, value=NK#node_key.domain});
+                true -> true = ets:insert(?REG_ADDR(D), #map{key=Addr, value=NK#node_key.domain});
                 _ -> true
             end,
-            true = ets:insert(?REG_HOST(F), #map{key=Host, value=NK#node_key.domain}),
-            true = ets:insert(?REGISTRY(F), Node);
+            true = ets:insert(?REG_HOST(D), #map{key=Host, value=NK#node_key.domain}),
+            true = ets:insert(?REGISTRY(D), Node);
         % insert if Node doesn't exists yet
         [] ->
-            true = ets:insert(?REG_ATOM(F), #map{key=Node#node.name_atom, value=NK}),
+            true = ets:insert(?REG_ATOM(D), #map{key=Node#node.name_atom, value=NK}),
             case is_tuple(Addr) of
-                true -> true = ets:insert(?REG_ADDR(F), #map{key=Addr, value=NK#node_key.domain});
+                true -> true = ets:insert(?REG_ADDR(D), #map{key=Addr, value=NK#node_key.domain});
                 _ -> true
             end,
-            true = ets:insert(?REG_HOST(F), #map{key=Host, value=NK#node_key.domain}),
-            true = ets:insert(?REG_PART(F), #map{key=NK#node_key.local_part, value=NK#node_key.domain}),
-            true = ets:insert(?REGISTRY(F), Node)
+            true = ets:insert(?REG_HOST(D), #map{key=Host, value=NK#node_key.domain}),
+            true = ets:insert(?REG_PART(D), #map{key=NK#node_key.local_part, value=NK#node_key.domain}),
+            true = ets:insert(?REGISTRY(D), Node)
     end,
     Node.
 
 
-do_remove_node(NodeName, F) when is_atom(NodeName) ->
+do_remove_node(NodeName, D) when is_atom(NodeName) ->
     try
-        [#map{value = NodeKey}] = ets:take(?REG_ATOM(F), NodeName),
-        [#node{addr = Addr, host = Host}] = ets:take(?REGISTRY(F), NodeKey),
+        [#map{value = NodeKey}] = ets:take(?REG_ATOM(D), NodeName),
+        [#node{addr = Addr, host = Host}] = ets:take(?REGISTRY(D), NodeKey),
         {NodeKey, Addr, Host}
     of
         {NK = #node_key{domain = Domain}, A, H} ->
-            true = case names(Domain, F) of
+            true = case names(Domain, D) of
                        % Only delete the address and host mapping
                        % if there're no other nodes with the same domain.
                        [] ->
-                           ets:delete(?REG_ADDR(F), A),
-                           ets:delete(?REG_HOST(F), H);
+                           ets:delete(?REG_ADDR(D), A),
+                           ets:delete(?REG_HOST(D), H);
                        _ -> true
                    end,
-            true = ets:delete(?REG_PART(F), NK#node_key.local_part)
+            true = ets:delete(?REG_PART(D), NK#node_key.local_part)
     catch
         error:_ -> ok
     end.
@@ -577,16 +576,15 @@ node_from_node_key(NK = #node_key{local_part = LP, domain = D},
     N#node{added_ts = erlang:system_time(microsecond),
            key = NK}.
 
-verify_insert(Pid, Node, Family) ->
-    M = ?MOD(Family),
+verify_insert(Pid, Node, D) ->
     spawn(
       fun() ->
-        gen_server:cast(Pid, {insert, verify_port(set_address(Node, M), M)})
+        gen_server:cast(Pid, {insert, verify_port(set_address(Node, D), D)})
       end).
 
 -spec set_address(Node, Module) -> NewNode | {{error, Reason}, EHost} when
       Node    :: #node{},
-      Module :: inet_tcp|inet6_tcp,
+      Module :: inet_tcp|inet6_tcp|eless_tcp,
       NewNode :: #node{addr::inet:ip_address()},
       Reason  :: term(),
       EHost :: any().
@@ -599,7 +597,7 @@ set_address(Node = #node{host=Host}, M) ->
 
 -spec verify_port(Node|{{error, Reason}, EHost}, Module) -> NewNode | {{error, Reason}, EAddrPort} when
       Node    :: #node{},
-      Module :: inet_tcp|inet6_tcp,
+      Module :: inet_tcp|inet6_tcp|eless_tcp,
       NewNode :: #node{addr::inet:ip_address()},
       Reason  :: term(),
       EHost :: any(),
@@ -634,12 +632,11 @@ join_list(Char, [Head|Tail]) ->
     join_list(Char, [Head]) ++ [Char|join_list(Char, Tail)].
 
 
-gethostname(inet) -> gethostname(inet_udp);
-gethostname(inet6) -> gethostname(inet6_udp);
-gethostname(UDP) ->
+gethostname(Driver) ->
     % Crawlera specific environment vars
     case os:getenv("HOST", os:getenv("HOSTNAME")) of
         false ->
+            {UDP,[]} = inet:udp_module([Driver:family()]),
             case UDP:open(0,[]) of
                 {ok,U} ->
                     {ok,Res} = inet:gethostname(U),

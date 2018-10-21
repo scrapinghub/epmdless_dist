@@ -5,7 +5,7 @@
 epmdless_test_() ->
     {setup,
      fun() ->
-        Hostname = list_to_atom(epmdless_client:gethostname(inet)),
+        Hostname = list_to_atom(epmdless_client:gethostname(inet_tcp)),
         ?debugVal(Hostname),
         SocksNodes = [ {Sock, {list_to_atom([LP]), Dom, Port}}
                        || LP <- lists:seq($a,$d),
@@ -88,7 +88,7 @@ register_node({_Socks, Nodes, _Pid, {_DistSock, DistPort}}) ->
     PB = get_port(b, localhost, Nodes),
     PC = get_port(c, localhost, Nodes),
     PD = get_port(d, localhost, Nodes),
-    Hostname = epmdless_client:gethostname(inet),
+    Hostname = epmdless_client:gethostname(inet_tcp),
     HostAtom = list_to_atom(Hostname),
     PAH = get_port(a, HostAtom, Nodes),
     PBH = get_port(b, HostAtom, Nodes),
@@ -168,7 +168,7 @@ port_please({_Socks, Nodes, _Pid, {_DistSock, _DistPort}}) ->
 
 add_node({_Socks, _Nodes, _Pid, {_DistSock, DistPort}}) ->
     %% Tests with hostname
-    Hostname = epmdless_client:gethostname(inet),
+    Hostname = epmdless_client:gethostname(inet_tcp),
     NodeName = list_to_atom([$i, $@|Hostname]),
 
     ok = epmdless_dist:?FUNCTION_NAME(NodeName, DistPort),
@@ -208,7 +208,7 @@ list_nodes({_Socks, Nodes, _Pid, {_DistSock, DistPort}}) ->
     PB = get_port(b, localhost, Nodes),
     PC = get_port(c, localhost, Nodes),
     PD = get_port(d, localhost, Nodes),
-    Hostname = list_to_atom(epmdless_client:gethostname(inet)),
+    Hostname = list_to_atom(epmdless_client:gethostname(inet_tcp)),
     PAH = get_port(a, Hostname, Nodes),
     PBH = get_port(b, Hostname, Nodes),
     PCH = get_port(c, Hostname, Nodes),

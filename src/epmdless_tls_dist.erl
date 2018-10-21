@@ -39,13 +39,17 @@ childspecs() ->
     }]}.
 
 select(Node) ->
-    gen_select(inet_tcp, Node).
+    gen_select(eless_tcp, Node).
 
 gen_select(Driver, Node) ->
     case split_node(atom_to_list(Node), $@, []) of
-	[_, Host] ->
+	[LP, Host] ->
 	    case inet:getaddr(Host, Driver:family()) of
-		{ok, _} -> true;
+		{ok, _} ->
+		    case application:get_env(epmdless_dist, tls_nodes) of
+                {ok, NodePrefixList} -> lists:member(LP, NodePrefixList);
+                undefined -> true
+            end;
 		_ -> false
 	    end;
 	_ -> 
@@ -58,19 +62,19 @@ is_node_name(_) ->
     false.
 
 listen(Name) ->
-    gen_listen(inet_tcp, Name).
+    gen_listen(eless_tcp, Name).
 
 gen_listen(Driver, Name) ->
     epmdless_tls_dist_proxy:listen(Driver, Name).
 
 accept(Listen) ->
-    gen_accept(inet_tcp, Listen).
+    gen_accept(eless_tcp, Listen).
 
 gen_accept(Driver, Listen) ->
     epmdless_tls_dist_proxy:accept(Driver, Listen).
 
 accept_connection(AcceptPid, Socket, MyNode, Allowed, SetupTime) ->
-    gen_accept_connection(inet_tcp, AcceptPid, Socket, MyNode, Allowed, SetupTime).
+    gen_accept_connection(eless_tcp, AcceptPid, Socket, MyNode, Allowed, SetupTime).
 
 gen_accept_connection(Driver, AcceptPid, Socket, MyNode, Allowed, SetupTime) ->
     Kernel = self(),
@@ -78,7 +82,7 @@ gen_accept_connection(Driver, AcceptPid, Socket, MyNode, Allowed, SetupTime) ->
 				  MyNode, Allowed, SetupTime) end).
 
 setup(Node, Type, MyNode, LongOrShortNames,SetupTime) ->
-    gen_setup(inet_tcp, Node, Type, MyNode, LongOrShortNames,SetupTime).
+    gen_setup(eless_tcp, Node, Type, MyNode, LongOrShortNames,SetupTime).
 
 gen_setup(Driver, Node, Type, MyNode, LongOrShortNames,SetupTime) ->
     Kernel = self(),

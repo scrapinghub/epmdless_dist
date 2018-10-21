@@ -27,20 +27,16 @@ stop() -> epmdless_dist_sup:stop().
       Port       :: inet:port_number(),
       CreationId :: 1..3.
 register_node(Name, PortNo) ->
-    register_node(Name, PortNo, inet).
+    register_node(Name, PortNo, inet_tcp).
 
--spec register_node(Name, Port, Family) -> {ok, CreationId} when
+-spec register_node(Name, Port, Driver) -> {ok, CreationId} when
       Name       :: atom(),
       Port       :: inet:port_number(),
-      Family     :: atom(),
+      Driver     :: atom(),
       CreationId :: 1..3.
-register_node(Name, PortNo, inet_tcp) ->
-    register_node(Name, PortNo, inet);
-register_node(Name, PortNo, inet6_tcp) ->
-    register_node(Name, PortNo, inet6);
-register_node(Name, Port, Family) ->
-    {ok, Pid} = epmdless_dist_sup:start_child(Name, Port, Family),
-    epmdless_client:register_node(Pid, Name, Port, Family).
+register_node(Name, Port, Driver) ->
+    {ok, Pid} = epmdless_dist_sup:start_child(Name, Port, Driver),
+    epmdless_client:register_node(Pid, Name, Port, Driver).
 
 port_please(Node) ->
   port_please(Node, undefined).
@@ -76,7 +72,7 @@ names(Host) ->
       epmdless_dist_sup:map_children(
         fun(Child) -> epmdless_client:names(
                         Host,
-                        epmdless_client:family(Child))
+                        epmdless_client:driver(Child))
         end)).
 
 
@@ -109,7 +105,7 @@ node_please(LocalPart) ->
          fun(Child) ->
                  epmdless_client:node_please(
                    LocalPart,
-                   epmdless_client:family(Child))
+                   epmdless_client:driver(Child))
          end,
          fun(undefined) -> false;
             (_) -> true
@@ -123,7 +119,7 @@ local_part(NodeName) ->
          fun(Child) ->
                  epmdless_client:local_part(
                    NodeName,
-                   epmdless_client:family(Child))
+                   epmdless_client:driver(Child))
          end,
          fun(undefined) -> false;
             (_) -> true
