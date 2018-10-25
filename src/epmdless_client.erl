@@ -262,6 +262,7 @@ driver(Pid) ->
 %% gen_server callbacks
 
 init([Name, DistPort, Driver = D]) ->
+    application:load(?APP),
     ets:new(?REGISTRY(D), ?ETS_OPTS(set, #node.key)),
     ets:new(?REG_ATOM(D), ?ETS_OPTS(set, #map.key)),
     ets:new(?REG_ADDR(D), ?ETS_OPTS(set, #map.key)),
@@ -269,7 +270,9 @@ init([Name, DistPort, Driver = D]) ->
     ets:new(?REG_PART(D), ?ETS_OPTS(bag, #map.key)),
     error_logger:info_msg("Starting erlang distribution at port ~p~n", [DistPort]),
     self() ! timeout,
-    {ok, #state{creation = rand:uniform(3), name=Name, port=DistPort, driver=Driver}}.
+    State = #state{creation = rand:uniform(3), name=Name, port=DistPort, driver=Driver},
+    insert_config(fun(LP) -> LP == Name end, State),
+    {ok, State}.
 
 handle_call({register_node, Name, DistPort, Driver}, _From, State = #state{creation = Creation}) ->
     {_, NewState} = handle_cast({register_node, Name, DistPort, Driver}, State),
@@ -426,15 +429,10 @@ lookup_port(Pid, LocalPart, Addr, S = #state{driver = D}) when is_tuple(Addr) ->
         Domain -> lookup_port(Pid, LocalPart, Domain, S)
     catch
         error:badarg ->
-            NewDiscoveries =
-            [ begin
-                  handle_cast({insert, Verification}, S),
-                  Verification
-              end || Node = #node{key = #node_key{local_part = LP}} <- node_list(),
-                     not ets:member(?REG_PART(D), LP),
-                     Verification <- [verify_port(set_address(Node, D), D)],
-                     LP == LocalPart],
-            case [N || N = #node{addr = A} <- NewDiscoveries, A == Addr] of
+            case [N || N = #node{addr = A} <- insert_config(
+                                                fun(LP) -> LP == LocalPart end,
+                                                S),
+                       A == Addr] of
                 [#node{port=Port}] -> Port;
                 [] -> error(badarg);
                 %% It's an error to have multiple node definitions
@@ -461,6 +459,21 @@ lookup_last_added_node(LocalPart, Domains, D) ->
       end,
       {0, undefined},
       Domains).
+
+
+insert_config(Filter, S = #state{name=Name, driver = D, port=DistPort}) ->
+    Self = tuple_to_node({Name, gethostname(D), DistPort}),
+    [
+     begin
+          handle_cast({insert, Verification}, S),
+          Verification
+      end
+      || Node = #node{key = #node_key{local_part = LP}} <- [Self|node_list()],
+         Filter(LP),
+         not ets:member(?REG_PART(D), LP),
+         Verification <- [verify_port(set_address(Node, D), D)]
+    ].
+
 
 insert_ignore(Node = #node{ key = NK, addr = Addr, host = Host, port = Port}, D) ->
     case ets:lookup(?REGISTRY(D), NK) of
