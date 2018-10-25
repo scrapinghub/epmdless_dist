@@ -219,7 +219,8 @@ node_please(LocalPart, D) ->
 local_part(NodeName, D) ->
     case ets:lookup(?REG_ATOM(D), NodeName) of
         [#map{value=NK}] -> NK#node_key.local_part;
-        [] -> undefined
+        [] -> {LP, _, _} = string_to_tuple(atom_to_list(NodeName)),
+              LP
     end.
 
 %% node maintenance functions
@@ -271,7 +272,8 @@ init([Name, DistPort, Driver = D]) ->
     error_logger:info_msg("Starting erlang distribution at port ~p~n", [DistPort]),
     self() ! timeout,
     State = #state{creation = rand:uniform(3), name=Name, port=DistPort, driver=Driver},
-    insert_config(fun(LP) -> LP == Name end, State),
+    % Do not add configuration in init, because the name or address resolution
+    % can block the startup sequence of the node.
     {ok, State}.
 
 handle_call({register_node, Name, DistPort, Driver}, _From, State = #state{creation = Creation}) ->
