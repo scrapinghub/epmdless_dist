@@ -219,8 +219,11 @@ node_please(LocalPart, D) ->
 local_part(NodeName, D) ->
     case ets:lookup(?REG_ATOM(D), NodeName) of
         [#map{value=NK}] -> NK#node_key.local_part;
-        [] -> {LP, _, _} = string_to_tuple(atom_to_list(NodeName)),
-              LP
+        [] ->
+            case string_to_tuple(atom_to_list(NodeName)) of
+                {_, undefined, undefined} -> undefined;
+                {LP, _, _} -> list_to_atom(LP)
+            end
     end.
 
 %% node maintenance functions

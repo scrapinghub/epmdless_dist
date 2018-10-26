@@ -143,6 +143,7 @@ node_please(_) ->
 local_part(_) ->
     %% should return undefined
     undefined = epmdless_dist:?FUNCTION_NAME(non_existent),
+    defined = epmdless_dist:?FUNCTION_NAME('defined@non_existent'),
     a = epmdless_dist:?FUNCTION_NAME('a@localhost').
 
 host_please(_) ->
