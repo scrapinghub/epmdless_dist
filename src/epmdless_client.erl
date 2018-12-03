@@ -107,26 +107,28 @@ child_spec() ->
 
 % erl_epmd API
 
-start(Name, DistPort, Driver) ->
-    gen_server:start(?MODULE, [Name, DistPort, Driver], []).
+start(Name, DistPort, D = Driver) ->
+    gen_server:start({local, ?REGISTRY(D)}, ?MODULE, [Name, DistPort, Driver], []).
 
-start_link(Name, DistPort, Driver) ->
-    gen_server:start_link(?MODULE, [Name, DistPort, Driver], []).
+start_link(Name, DistPort, D = Driver) ->
+    gen_server:start_link({local, ?REGISTRY(D)}, ?MODULE,
+                          [Name, DistPort, Driver], []).
 
-stop(Pid) ->
+stop(Driver = D) when is_atom(Driver) ->
+    ?FUNCTION_NAME(whereis(?REGISTRY(D)));
+stop(Pid) when is_pid(Pid) ->
     gen_server:call(Pid, stop, infinity).
 
-
-register_node(Pid, Name, PortNo) ->
-    register_node(Pid, Name, PortNo, inet).
+register_node(Driver = D, Name, Port) when is_atom(Driver) ->
+    ?FUNCTION_NAME(whereis(?REGISTRY(D)), Name, Port, Driver).
 
 -spec register_node(Pid, Name, Port, Driver) -> {ok, CreationId} when
-      Pid        :: pid(),
+      Pid        :: pid() | atom(),
       Name       :: atom(),
       Port       :: inet:port_number(),
       Driver     :: atom(),
       CreationId :: 1..3.
-register_node(Pid, Name, Port, Driver) ->
+register_node(Pid, Name, Port, Driver) when is_pid(Pid) ->
     gen_server:call(Pid, {?FUNCTION_NAME, Name, Port, Driver}, infinity).
 
 port_please(Pid, Node) ->
@@ -136,7 +138,7 @@ port_please(Pid, Node, Host) ->
     port_please(Pid, Node, Host, infinity).
 
 -spec port_please(Pid, Name, Host, Timeout) -> {port, Port, Version} | noport when
-      Pid     :: pid(),
+      Pid     :: pid() | atom(),
       Name    :: list() | atom(),
       Host    :: list() | atom() | inet:hostname() | inet:ip_address(),
       Timeout :: integer() | infinity,
@@ -145,7 +147,9 @@ port_please(Pid, Node, Host) ->
 %% @doc
 %% request port of node `Name`
 %% @end
-port_please(Pid, Name, Host, Timeout) ->
+port_please(Driver = D, Name, Host, Timeout) when is_atom(Driver) ->
+    port_please(whereis(?REGISTRY(D)), Name, Host, Timeout);
+port_please(Pid, Name, Host, Timeout) when is_pid(Pid) ->
     gen_server:call(Pid, {?FUNCTION_NAME, Name, Host}, Timeout).
 
 
@@ -179,14 +183,18 @@ names(Host, D) ->
 -spec get_info(Pid) -> Info when
       Pid  :: pid(),
       Info :: [{dist_port, inet:port_number()}].
-get_info(Pid) ->
+get_info(Driver = D) when is_atom(Driver) ->
+    ?FUNCTION_NAME(whereis(?REGISTRY(D)));
+get_info(Pid) when is_pid(Pid) ->
     gen_server:call(Pid, ?FUNCTION_NAME, infinity).
 
 -spec host_please(Pid, Node) -> {host, Host} | nohost when
       Pid  :: pid(),
       Node :: atom(),
       Host :: inet:hostname() | inet:ip_address().
-host_please(Pid, Node) ->
+host_please(Driver = D, Node) when is_atom(Driver) ->
+    ?FUNCTION_NAME(whereis(?REGISTRY(D)), Node);
+host_please(Pid, Node) when is_pid(Pid) ->
     gen_server:call(Pid, {?FUNCTION_NAME, Node}, infinity).
 
 -spec node_please(LocalPart, D) -> Node | undefined when
@@ -232,21 +240,27 @@ local_part(NodeName, D) ->
       Pid  :: pid(),
       Node :: atom(),
       Port :: inet:port_number().
-add_node(Pid, Node, Port) ->
+add_node(Driver = D, Node, Port) when is_atom(Driver) ->
+    ?FUNCTION_NAME(whereis(?REGISTRY(D)), Node, Port);
+add_node(Pid, Node, Port) when is_pid(Pid) ->
     ok = gen_server:cast(Pid, {?FUNCTION_NAME, Node, Port}).
 
 -spec add_node(Pid, Node, Host, Port) -> ok when
-      Pid  :: pid(),
+      Pid  :: pid() | atom(),
       Node :: atom(),
       Host :: inet:hostname() | inet:ip_address(),
       Port :: inet:port_number().
-add_node(Pid, Node, Host, Port) ->
+add_node(Driver = D, Node, Host, Port) when is_atom(Driver) ->
+    ?FUNCTION_NAME(whereis(?REGISTRY(D)), Node, Host, Port);
+add_node(Pid, Node, Host, Port) when is_pid(Pid) ->
     ok = gen_server:cast(Pid, {?FUNCTION_NAME, Node, Host, Port}).
 
 -spec remove_node(Pid, Node) -> ok when
-      Pid  :: pid(),
+      Pid  :: pid() | atom(),
       Node :: atom().
-remove_node(Pid, Node) ->
+remove_node(Driver = D, Node) when is_atom(Driver) ->
+    ?FUNCTION_NAME(whereis(?REGISTRY(D)), Node);
+remove_node(Pid, Node) when is_pid(Pid) ->
     ok = gen_server:cast(Pid, {?FUNCTION_NAME, Node}).
 
 -spec list_nodes(Pid) -> [{Node, {Host, Port}}] when
@@ -279,9 +293,30 @@ init([Name, DistPort, Driver = D]) ->
     % can block the startup sequence of the node.
     {ok, State}.
 
-handle_call({register_node, Name, DistPort, Driver}, _From, State = #state{creation = Creation}) ->
-    {_, NewState} = handle_cast({register_node, Name, DistPort, Driver}, State),
-    {reply, {ok, Creation}, NewState};
+handle_call({register_node, Name, DistPort, Driver}, From, State) when is_binary(DistPort) ->
+    handle_call({register_node, Name, binary_to_list(DistPort), Driver}, From, State);
+handle_call({register_node, Name, DistPort, Driver}, From, State) when is_list(DistPort) ->
+    handle_call({register_node, Name, list_to_integer(DistPort), Driver}, From, State);
+handle_call({register_node, Name, DistPort, Driver}, From, State) when is_binary(Name) ->
+    handle_call({register_node, binary_to_list(Name), DistPort, Driver}, From, State);
+handle_call({register_node, Name, DistPort, Driver}, From, State) when is_list(Name) ->
+    handle_call({register_node, list_to_atom(Name), DistPort, Driver}, From, State);
+handle_call({register_node, Name, DistPort, Driver}, _From, State = #state{creation = Creation, driver = Driver}) ->
+    Node = atom_to_node(Name, gethostname(Driver)),
+    try lookup_port(self(), Name, Node#node.host, State) of
+        DistPort ->
+            {noreply, NewState} =
+            handle_info(Node#node{port = DistPort}, State),
+            {reply, {ok, Creation}, NewState};
+        Port when Port /= DistPort ->
+            Reply = {error, duplicate_name},
+            {reply, Reply, State}
+    catch
+        error:badarg ->
+            {noreply, NewState} =
+            handle_info(Node#node{port = DistPort}, State),
+            {reply, {ok, Creation}, NewState}
+    end;
 
 handle_call(get_info, _From, State = #state{port = DistPort}) ->
     {reply, [{dist_port, DistPort}], State};
@@ -348,9 +383,6 @@ handle_call(Msg, _From, State) ->
     error_logger:error_msg("Unexpected message: ~p~n", [Msg]),
     {reply, {error, {bad_msg, Msg}}, State}.
 
-handle_cast({register_node, Name, DistPort, Driver}, State = #state{driver = Driver}) ->
-    handle_info(tuple_to_node({Name, gethostname(Driver), DistPort}), State);
-
 handle_cast({add_node, NodeName, Port}, State) when is_atom(NodeName) ->
     Node = atom_to_node(NodeName),
     handle_info(Node#node{port = Port}, State);
@@ -377,8 +409,8 @@ handle_cast({remove_node, NodeName}, State = #state{driver = F}) when is_atom(No
     do_remove_node(NodeName, F),
     {noreply, State};
 
-handle_cast({insert, N = #node{key=#node_key{}}}, State = #state{driver = F}) ->
-    insert_ignore(N, F),
+handle_cast({insert, N = #node{key=#node_key{}}}, State = #state{driver = F, name = Name}) ->
+    insert_ignore(N, F, Name),
     {noreply, State};
 handle_cast({insert, {Error, {EAddr, EPort}}}, State) ->
     error_logger:error_msg("Port verification failed for ~p:~p due to ~p",
@@ -480,43 +512,35 @@ insert_config(Filter, S = #state{name=Name, driver = D, port=DistPort}) ->
     ].
 
 
-insert_ignore(Node = #node{ key = NK, addr = Addr, host = Host, port = Port}, D) ->
-    case ets:lookup(?REGISTRY(D), NK) of
+insert_ignore(Node = #node{ key = NK, addr = Addr, host = Host, port = Port}, D, LocalName) ->
+    Updated =
+    case ets:match_object(?REGISTRY(D), #node{key = NK#node_key{domain='_'}, _ = '_'}) of
+        % never override the node itself
+        [#node{key = #node_key{local_part = LP}}] when LP == LocalName -> false;
         % ignore if Address, Host and Port match
         [#node{addr = Addr, host = Host, port = Port}] -> false;
         % update Port if Address and Host match
         [#node{addr = Addr1, host = Host}] when Addr == undefined orelse
                                                 Addr == Addr1 ->
             true = ets:insert(?REGISTRY(D), Node);
-        % update Address and Host if only Port matches
-        [#node{addr = A, host = H, port = Port}] ->
-            true = case names(NK#node_key.domain, D) of
-                       % Only delete the host mapping
-                       % if there're no other nodes with the same domain.
-                       [] ->
-                           ets:delete(?REG_ADDR(D), A),
-                           ets:delete(?REG_HOST(D), H);
-                       _ -> true
-                   end,
-            case is_tuple(Addr) of
-                true -> true = ets:insert(?REG_ADDR(D), #map{key=Addr, value=NK#node_key.domain});
-                _ -> true
-            end,
-            true = ets:insert(?REG_HOST(D), #map{key=Host, value=NK#node_key.domain}),
-            true = ets:insert(?REGISTRY(D), Node);
+        % update Address and Host regardless if Port matches or not
+        [#node{name_atom = OldNode}] ->
+            do_remove_node(OldNode, D),
+            do_insert_node(Node, D);
         % insert if Node doesn't exists yet
-        [] ->
-            true = ets:insert(?REG_ATOM(D), #map{key=Node#node.name_atom, value=NK}),
-            case is_tuple(Addr) of
-                true -> true = ets:insert(?REG_ADDR(D), #map{key=Addr, value=NK#node_key.domain});
-                _ -> true
-            end,
-            true = ets:insert(?REG_HOST(D), #map{key=Host, value=NK#node_key.domain}),
-            true = ets:insert(?REG_PART(D), #map{key=NK#node_key.local_part, value=NK#node_key.domain}),
-            true = ets:insert(?REGISTRY(D), Node)
+        [] -> do_insert_node(Node, D)
     end,
-    Node.
+    Updated andalso Node.
 
+do_insert_node(Node = #node{ key = NK, addr = Addr, host = Host}, D) ->
+    true = ets:insert(?REG_ATOM(D), #map{key=Node#node.name_atom, value=NK}),
+    case is_tuple(Addr) of
+        true -> true = ets:insert(?REG_ADDR(D), #map{key=Addr, value=NK#node_key.domain});
+        _ -> true
+    end,
+    true = ets:insert(?REG_HOST(D), #map{key=Host, value=NK#node_key.domain}),
+    true = ets:insert(?REG_PART(D), #map{key=NK#node_key.local_part, value=NK#node_key.domain}),
+    true = ets:insert(?REGISTRY(D), Node).
 
 do_remove_node(NodeName, D) when is_atom(NodeName) ->
     try

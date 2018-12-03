@@ -3,7 +3,7 @@
 %% erl_epmd callbacks
 -export([start/0, start_link/0, stop/0]).
 -export([register_node/2, register_node/3]).
--export([port_please/1, port_please/2, port_please/3]).
+-export([port_please/1, port_please/2, port_please/3, port_please/4]).
 -export([names/0, names/1]).
 
 %% auxiliary extensions
@@ -35,7 +35,10 @@ register_node(Name, PortNo) ->
       Driver     :: atom(),
       CreationId :: 1..3.
 register_node(Name, Port, Driver) ->
-    {ok, Pid} = epmdless_dist_sup:start_child(Name, Port, Driver),
+    Pid = case epmdless_dist_sup:start_child(Name, Port, Driver) of
+              {ok, P} -> P;
+              {error,{already_started,P}} -> P
+    end,
     epmdless_client:register_node(Pid, Name, Port, Driver).
 
 port_please(Node) ->
@@ -61,6 +64,8 @@ port_please(Name, Host, Timeout) ->
             (_) -> true
          end).
 
+port_please(Driver, Name, Host, Timeout) ->
+    epmdless_client:?FUNCTION_NAME(Driver, Name, Host, Timeout).
 
 names() -> names(undefined).
 
