@@ -94,6 +94,7 @@
     name   :: atom(),
     port   :: inet:port_number(),
     driver :: atom(),
+    host   :: string(),
     version = 5
 }).
 
@@ -302,19 +303,20 @@ handle_call({register_node, Name, DistPort, Driver}, From, State) when is_binary
 handle_call({register_node, Name, DistPort, Driver}, From, State) when is_list(Name) ->
     handle_call({register_node, list_to_atom(Name), DistPort, Driver}, From, State);
 handle_call({register_node, Name, DistPort, Driver}, _From, State = #state{creation = Creation, driver = Driver}) ->
-    Node = atom_to_node(Name, gethostname(Driver)),
-    try lookup_port(self(), Name, Node#node.host, State) of
+    HostState = State#state{host = gethostname(Driver)},
+    Node = atom_to_node(Name, HostState#state.host),
+    try lookup_port(self(), Name, HostState#state.host, HostState) of
         DistPort ->
             {noreply, NewState} =
-            handle_info(Node#node{port = DistPort}, State),
+            handle_info(Node#node{port = DistPort}, HostState),
             {reply, {ok, Creation}, NewState};
         Port when Port /= DistPort ->
             Reply = {error, duplicate_name},
-            {reply, Reply, State}
+            {reply, Reply, HostState}
     catch
         error:badarg ->
             {noreply, NewState} =
-            handle_info(Node#node{port = DistPort}, State),
+            handle_info(Node#node{port = DistPort}, HostState),
             {reply, {ok, Creation}, NewState}
     end;
 
@@ -405,12 +407,12 @@ handle_cast({add_node, NodeName, Host, Port}, State)
 
 handle_cast({remove_node, NodeName}, State) when is_list(NodeName) ->
     handle_cast({remove_node, list_to_atom(NodeName)}, State);
-handle_cast({remove_node, NodeName}, State = #state{driver = F}) when is_atom(NodeName) ->
-    do_remove_node(NodeName, F),
+handle_cast({remove_node, NodeName}, State = #state{driver = D}) when is_atom(NodeName) ->
+    do_remove_node(NodeName, D),
     {noreply, State};
 
-handle_cast({insert, N = #node{key=#node_key{}}}, State = #state{driver = F, name = Name}) ->
-    insert_ignore(N, F, Name),
+handle_cast({insert, N = #node{key=#node_key{}}}, State = #state{driver = D, name = Name, host = Host}) ->
+    insert_ignore(N, D, Name, Host),
     {noreply, State};
 handle_cast({insert, {Error, {EAddr, EPort}}}, State) ->
     error_logger:error_msg("Port verification failed for ~p:~p due to ~p",
@@ -511,26 +513,72 @@ insert_config(Filter, S = #state{name=Name, driver = D, port=DistPort}) ->
          Verification <- [verify_port(set_address(Node, D), D)]
     ].
 
+insert_ignore(Node = #node{ key = #node_key{ local_part = ThisNodeLP }, host = ThisHost }, D, ThisNodeLP, ThisHost) ->
+    %% To ensure there's only 1 node with the same local_part,
+    %% nodes with the same local-part on different hosts are removed.
+    [ do_remove_node(Other, D)
+      || Other <- ets:select(?REGISTRY(D), same_lp_diff_host_ms(ThisNodeLP, ThisHost)) ],
+    do_insert_node(Node, D) andalso Node;
+insert_ignore(Node = #node{ key = NK }, D, ThisNodeLP, ThisHost) ->
+    SameLPEntries = ets:match_object(?REGISTRY(D), #node{key = NK#node_key{domain='_'}, _ = '_'}),
+    % Current entry is only inserted if non of the already existing records prompt to ignore it.
+    case lists:all(fun(Other) -> is_diff_node_with_same_lp(Node, Other, D, ThisNodeLP, ThisHost) end, SameLPEntries) of
+        true ->
+            % insert if Node doesn't exists yet
+            do_insert_node(Node, D) andalso Node;
+        false -> false
+    end.
 
-insert_ignore(Node = #node{ key = NK, addr = Addr, host = Host, port = Port}, D, LocalName) ->
-    Updated =
-    case ets:match_object(?REGISTRY(D), #node{key = NK#node_key{domain='_'}, _ = '_'}) of
-        % never override the node itself
-        [#node{key = #node_key{local_part = LP}}] when LP == LocalName -> false;
-        % ignore if Address, Host and Port match
-        [#node{addr = Addr, host = Host, port = Port}] -> false;
-        % update Port if Address and Host match
-        [#node{addr = Addr1, host = Host}] when Addr == undefined orelse
-                                                Addr == Addr1 ->
-            true = ets:insert(?REGISTRY(D), Node);
-        % update Address and Host regardless if Port matches or not
-        [#node{name_atom = OldNode}] ->
-            do_remove_node(OldNode, D),
-            do_insert_node(Node, D);
-        % insert if Node doesn't exists yet
-        [] -> do_insert_node(Node, D)
-    end,
-    Updated andalso Node.
+is_diff_node_with_same_lp(Node = #node{ key = NK, addr = Addr, host = Host, port = Port }, Other, D, ThisNodeLP, _ThisHost) ->
+    case Other of
+        % never override the node itself by other nodes on external hosts
+        #node{key = #node_key{local_part = LP}} when LP == ThisNodeLP -> false;
+        % Ignore if Address, Host and Port match,
+        % implies that local_part, domain and name_atom are the same.
+        #node{addr = Addr, host = Host, port = Port} -> false;
+        % Update Port and Address if at least Host match,
+        % implies that local_part, domain and name_atom are the same.
+        #node{addr = Addr1, host = Host} when Addr == undefined orelse
+                                              Addr == Addr1 ->
+            true = ets:insert(?REGISTRY(D), Node),
+            false;
+        % Update Address and Host regardless if Port matches or not.
+        % Either we have record of no longer existing nodes, or
+        % there are nodes with the same local_part but different domains.
+        % Let's clean up non-existing nodes.
+        N = #node{key = #node_key{domain = Domain1}} when NK#node_key.domain =/= Domain1 ->
+            remove_if_unreachable(N, D),
+            true;
+        N ->
+            error_logger:error_msg("Unexpected insert clause - matched: ~p, new: ~p, driver: ~p, lp: ~p, host: ~p~n",
+                                   [N, Node, D, ThisNodeLP, _ThisHost]),
+            true
+    end.
+
+same_lp_diff_host_ms(ThisNodeLP, ThisHost) ->
+    ets:fun2ms(fun(N = #node{ key = #node_key{ local_part = LP },
+                              host = Host })
+                     when LP =:= ThisNodeLP andalso
+                          Host =/= ThisHost ->
+                       N#node.name_atom
+               end).
+
+remove_if_unreachable(Node, D) ->
+    Pid = self(),
+    spawn(
+      fun() ->
+              case verify_port(Node, D) of
+                  Node -> ok;
+                  {Error, {EAddr, EPort}} ->
+                      error_logger:info_msg("Removing ~p - Port verification failed for ~p:~p due to ~p",
+                                            [Node#node.name_atom, EAddr, EPort, Error]),
+                      gen_server:cast(Pid, {remove_node, Node#node.name_atom});
+                  {Error, EHost} ->
+                      error_logger:info_msg("Removing ~p - IP resolution failed for ~p due to ~p",
+                                            [Node#node.name_atom, EHost, Error]),
+                      gen_server:cast(Pid, {remove_node, Node#node.name_atom})
+              end
+      end).
 
 do_insert_node(Node = #node{ key = NK, addr = Addr, host = Host}, D) ->
     true = ets:insert(?REG_ATOM(D), #map{key=Node#node.name_atom, value=NK}),
