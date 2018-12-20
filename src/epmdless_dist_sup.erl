@@ -36,6 +36,11 @@ first_succcessful_or_last_failed_child(Fun, IsSuccessFul, [Child|Rest], Failures
     end.
 
 children() ->
-    [ Child
-      || {undefined, Child, worker, [epmdless_client]}
-         <- supervisor:which_children(?MODULE) ].
+    case is_pid(whereis(epmdless_alt_0)) of
+        true ->
+            [ Child || {undefined, Child, worker, [epmdless_client]}
+               <- supervisor:which_children(?MODULE), is_pid(Child) ];
+        false ->
+            epmdless_client:children()
+    end.
+

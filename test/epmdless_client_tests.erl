@@ -323,14 +323,14 @@ local_part_same_as_local_pre_register({{_Sock, Port}, _Pid, {_DistSock, DistPort
     {ok, _} = epmdless_dist_sup:start_child(test_node, DistPort, inet_tcp),
     ok = epmdless_dist:add_node('test_node@localhost', Port),
     ['test_node@localhost'] =
-    lists:usort([N || _ <- lists:seq(1,1000),
+    lists:usort([N || _ <- lists:seq(1,5000),
                       N <- [epmdless_dist:node_please(test_node)],
                       N =/= undefined]),
     {port, Port, 5} = epmdless_dist:port_please(test_node, "localhost"),
     {ok, _} = epmdless_dist:register_node(test_node, DistPort, inet_tcp),
 
     [LocalNode| _] =
-    lists:usort([N || _ <- lists:seq(1,1000),
+    lists:usort([N || _ <- lists:seq(1,5000),
                       N <- [epmdless_dist:node_please(test_node)],
                       N =/= undefined]),
     LocalNode = epmdless_dist:node_please(test_node),

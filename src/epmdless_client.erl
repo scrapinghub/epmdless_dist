@@ -12,7 +12,7 @@
 %% Module which used as a callback which passed to erlang vm via `-epmd_module` attribute
 %% @end
 
--export([child_spec/0]).
+-export([child_spec/0, children/0]).
 %% erl_epmd callbacks
 -export([start/3, start_link/3, stop/1,
          register_node/3, register_node/4,
@@ -39,23 +39,28 @@
 
 -define(REGISTRY(D), case D of inet_tcp  -> epmdless_inet;
                                eless_tcp -> epmdless_eless;
-                               inet6_tcp -> epmdless_inet6
+                               inet6_tcp -> epmdless_inet6;
+                               {alt_tcp, _} -> list_to_atom("epmdless_alt_"++integer_to_list(element(2,D)))
                      end).
 -define(REG_ATOM(D), case D of inet_tcp  -> epmdless_inet_atoms;
                                eless_tcp -> epmdless_eless_atoms;
-                               inet6_tcp -> epmdless_inet6_atoms
+                               inet6_tcp -> epmdless_inet6_atoms;
+                               {alt_tcp, _} -> list_to_atom("epmdless_alt_"++integer_to_list(element(2,D))++"_atoms")
                      end).
 -define(REG_ADDR(D), case D of inet_tcp  -> epmdless_inet_addrs;
                                eless_tcp -> epmdless_eless_addrs;
-                               inet6_tcp -> epmdless_inet6_addrs
+                               inet6_tcp -> epmdless_inet6_addrs;
+                               {alt_tcp, _} -> list_to_atom("epmdless_alt_"++integer_to_list(element(2,D))++"_addrs")
                      end).
 -define(REG_HOST(D), case D of inet_tcp  -> epmdless_inet_hosts;
                                eless_tcp -> epmdless_eless_hosts;
-                               inet6_tcp -> epmdless_inet6_hosts
+                               inet6_tcp -> epmdless_inet6_hosts;
+                               {alt_tcp, _} -> list_to_atom("epmdless_alt_"++integer_to_list(element(2,D))++"_hosts")
                      end).
 -define(REG_PART(D), case D of inet_tcp  -> epmdless_inet_parts;
                                eless_tcp -> epmdless_eless_parts;
-                               inet6_tcp -> epmdless_inet6_parts
+                               inet6_tcp -> epmdless_inet6_parts;
+                               {alt_tcp, _} -> list_to_atom("epmdless_alt_"++integer_to_list(element(2,D))++"_parts")
                      end).
 
 -define(ETS_OPTS(Type, KeyIdx), [Type, protected, named_table,
@@ -105,6 +110,10 @@ child_spec() ->
       shutdown => 5000,
       type => worker,
       modules => [?MODULE]}.
+
+children() ->
+    Drivers = [inet_tcp, eless_tcp, inet6_tcp],
+    [D || D <- Drivers, is_pid(whereis(?REGISTRY(D)))].
 
 % erl_epmd API
 
@@ -167,14 +176,14 @@ names(Domain, D) when is_atom(Domain) ->
     MatchSpec = [{?NODE_MATCH(NodeKey), [], ['$3']}],
     ets:select(?REGISTRY(D), MatchSpec);
 names(Addr, D) when is_tuple(Addr) ->
-    try ets:lookup_element(?REG_ADDR(D), Addr, #map.value) of
-        Domain -> names(Domain, D)
+    try
+        names(ets:lookup_element(?REG_ADDR(D), Addr, #map.value), D)
     catch
         error:badarg -> []
     end;
 names(Host, D) ->
-    try ets:lookup_element(?REG_HOST(D), Host, #map.value) of
-        Domain -> names(Domain, D)
+    try
+        names(ets:lookup_element(?REG_HOST(D), Host, #map.value), D)
     catch
         error:badarg -> []
     end.
@@ -208,7 +217,8 @@ node_please(LocalPart, D) ->
         % so we'll just send it back.
         true -> LocalPart;
         false ->
-            try ets:lookup_element(?REG_PART(D), LocalPart, #map.value) of
+            try
+                case ets:lookup_element(?REG_PART(D), LocalPart, #map.value) of
                 [Domain] ->
                     ets:lookup_element(?REGISTRY(D),
                                        #node_key{local_part=LocalPart, domain=Domain},
@@ -216,6 +226,7 @@ node_please(LocalPart, D) ->
                 Domains when is_list(Domains) ->
                     {_Ts, Node} = lookup_last_added_node(LocalPart, Domains, D),
                     Node#node.name_atom
+                end
             catch
                 error:badarg -> undefined
             end
@@ -269,6 +280,8 @@ remove_node(Pid, Node) when is_pid(Pid) ->
       Node :: atom(),
       Host :: inet:hostname() | inet:ip_address(),
       Port :: inet:port_number().
+list_nodes(Driver = D) when is_atom(Driver) ->
+    ?FUNCTION_NAME(whereis(?REGISTRY(D)));
 list_nodes(Pid) ->
     gen_server:call(Pid, ?FUNCTION_NAME, infinity).
 
@@ -305,19 +318,21 @@ handle_call({register_node, Name, DistPort, Driver}, From, State) when is_list(N
 handle_call({register_node, Name, DistPort, Driver}, _From, State = #state{creation = Creation, driver = Driver}) ->
     HostState = State#state{host = gethostname(Driver)},
     Node = atom_to_node(Name, HostState#state.host),
-    try lookup_port(self(), Name, HostState#state.host, HostState) of
+    try
+        case lookup_port(self(), Name, HostState#state.host, HostState) of
         DistPort ->
-            {noreply, NewState} =
+            {noreply, NewState1} =
             handle_info(Node#node{port = DistPort}, HostState),
-            {reply, {ok, Creation}, NewState};
+            {reply, {ok, Creation}, NewState1};
         Port when Port /= DistPort ->
             Reply = {error, duplicate_name},
             {reply, Reply, HostState}
+        end
     catch
         error:badarg ->
-            {noreply, NewState} =
+            {noreply, NewState2} =
             handle_info(Node#node{port = DistPort}, HostState),
-            {reply, {ok, Creation}, NewState}
+            {reply, {ok, Creation}, NewState2}
     end;
 
 handle_call(get_info, _From, State = #state{port = DistPort}) ->
@@ -345,8 +360,9 @@ handle_call({port_please, LocalPart, Host}, From, State)
 handle_call({port_please, LocalPart, Host}, _From, State = #state{version = Version})
   when is_atom(LocalPart) ->
     Reply =
-    try lookup_port(self(), LocalPart, Host, State) of
-        Port -> {port, Port, Version}
+    try
+        Port = lookup_port(self(), LocalPart, Host, State),
+        {port, Port, Version}
     catch
         error:badarg ->
             error_logger:error_msg("No port for ~p@~p~n", [LocalPart, Host]),
@@ -464,8 +480,9 @@ lookup_port(_Pid, LocalPart, Domain, #state{driver = D}) when is_atom(Domain) ->
     end,
     ets:lookup_element(?REGISTRY(D), NodeKey, #node.port);
 lookup_port(Pid, LocalPart, Addr, S = #state{driver = D}) when is_tuple(Addr) ->
-    try ets:lookup_element(?REG_ADDR(D), Addr, #map.value) of
-        Domain -> lookup_port(Pid, LocalPart, Domain, S)
+    try
+        Domain = ets:lookup_element(?REG_ADDR(D), Addr, #map.value),
+        lookup_port(Pid, LocalPart, Domain, S)
     catch
         error:badarg ->
             case [N || N = #node{addr = A} <- insert_config(

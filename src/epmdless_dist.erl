@@ -75,9 +75,12 @@ names() -> names(undefined).
 names(Host) ->
     lists:flatten(
       epmdless_dist_sup:map_children(
-        fun(Child) -> epmdless_client:names(
-                        Host,
-                        epmdless_client:driver(Child))
+        fun(Driver) when is_atom(Driver) ->
+                epmdless_client:names(Host, Driver);
+           (Child) when is_pid(Child) ->
+                epmdless_client:names(
+                  Host,
+                  epmdless_client:driver(Child))
         end)).
 
 
@@ -88,8 +91,7 @@ names(Host) ->
 get_info() ->
     lists:flatten(
       epmdless_dist_sup:map_children(
-        fun(Child) -> epmdless_client:get_info(Child)
-        end)).
+        fun epmdless_client:get_info/1)).
 
 -spec host_please(Node) -> {host, Host} | nohost when
       Node :: atom(),
@@ -107,7 +109,9 @@ host_please(Node) ->
       Node :: atom().
 node_please(LocalPart) ->
     epmdless_dist_sup:first_succcessful_or_last_failed_child(
-         fun(Child) ->
+         fun(Driver) when is_atom(Driver) ->
+                 epmdless_client:node_please(LocalPart, Driver);
+            (Child) when is_pid(Child) ->
                  epmdless_client:node_please(
                    LocalPart,
                    epmdless_client:driver(Child))
@@ -121,7 +125,9 @@ node_please(LocalPart) ->
       LocalPart :: atom().
 local_part(NodeName) ->
     epmdless_dist_sup:first_succcessful_or_last_failed_child(
-         fun(Child) ->
+         fun(Driver) when is_atom(Driver) ->
+                 epmdless_client:local_part(NodeName, Driver);
+            (Child) when is_pid(Child) ->
                  epmdless_client:local_part(
                    NodeName,
                    epmdless_client:driver(Child))
