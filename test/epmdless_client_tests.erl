@@ -237,11 +237,11 @@ list_nodes({_Socks, Nodes, _Pid, {_DistSock, DistPort}}) ->
     PCH = get_port(c, Hostname, Nodes),
     PDH = get_port(d, Hostname, Nodes),
     ?assertMatch(
-    [{_ahostnode, {_ahostip, PAH}},{'a@localhost',{{127,0,0,1},PA}},
-     {_bhostnode, {_bhostip, PBH}},{'b@localhost',{{127,0,0,1},PB}},
-     {_chostnode, {_chostip, PCH}},{'c@localhost',{{127,0,0,1},PC}},
-     {_dhostnode, {_dhostip, PDH}},{'d@localhost',{{127,0,0,1},PD}},
-     {_testname, {_testip, DistPort}}],
+    [{_ahostnode,_ahostip,PAH,inet_tcp},{'a@localhost',{127,0,0,1},PA,inet_tcp},
+     {_bhostnode,_bhostip,PBH,inet_tcp},{'b@localhost',{127,0,0,1},PB,inet_tcp},
+     {_chostnode,_chostip,PCH,inet_tcp},{'c@localhost',{127,0,0,1},PC,inet_tcp},
+     {_dhostnode,_dhostip,PDH,inet_tcp},{'d@localhost',{127,0,0,1},PD,inet_tcp},
+     {_testname,_testip,DistPort,inet_tcp}],
     lists:sort(epmdless_dist:?FUNCTION_NAME())).
 
 names({_Socks, Nodes, _Pid, {_DistSock, DistPort}}) ->

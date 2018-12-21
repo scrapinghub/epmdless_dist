@@ -1,4 +1,5 @@
 -module(epmdless_dist).
+-behaviour(erlang_consul_node_discovery_worker).
 
 %% erl_epmd callbacks
 -export([start/0, start_link/0, stop/0]).
@@ -10,7 +11,7 @@
 -export([get_info/0, host_please/1, node_please/1, local_part/1]).
 
 %% node maintenance functions
--export([add_node/2, add_node/3]).
+-export([add_node/2, add_node/3, add_node/4]).
 -export([remove_node/1]).
 -export([list_nodes/0]).
 
@@ -156,6 +157,13 @@ add_node(Node, Host, Port) ->
          fun(Child) -> epmdless_client:add_node(Child, Node, Host, Port)
          end)).
 
+-spec add_node(Node, Host, Port, Driver) -> ok when
+      Node :: atom(),
+      Host :: inet:hostname() | inet:ip_address(),
+      Port :: inet:port_number(),
+      Driver :: epmdless_client:drivers().
+add_node(Node, Host, Port, Driver) ->
+    epmdless_client:add_node(Driver, Node, Host, Port).
 
 -spec remove_node(Node) -> ok when
       Node :: atom().
@@ -171,6 +179,5 @@ remove_node(Node) ->
 list_nodes() ->
     lists:flatten(
       epmdless_dist_sup:map_children(
-        fun(Child) -> epmdless_client:list_nodes(Child)
-        end)).
+        fun epmdless_client:list_nodes/1)).
 

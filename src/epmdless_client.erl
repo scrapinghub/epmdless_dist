@@ -37,6 +37,8 @@
 
 -define(APP, epmdless_dist).
 
+-define(DRIVERS, [inet_tcp, eless_tcp, inet6_tcp]).
+
 -define(REGISTRY(D), case D of inet_tcp  -> epmdless_inet;
                                eless_tcp -> epmdless_eless;
                                inet6_tcp -> epmdless_inet6;
@@ -72,6 +74,9 @@
                                    host='$4',
                                    port='$1',
                                    added_ts='_'}).
+
+-export_type([drivers/0]).
+-type drivers() :: 'inet_tcp'|'eless_tcp'|'inet6_tcp'.
 
 -record(node_key, {
           %% using e-mail terminology: https://www.w3.org/Protocols/rfc822/#z8
@@ -112,8 +117,7 @@ child_spec() ->
       modules => [?MODULE]}.
 
 children() ->
-    Drivers = [inet_tcp, eless_tcp, inet6_tcp],
-    [D || D <- Drivers, is_pid(whereis(?REGISTRY(D)))].
+    [D || D <- ?DRIVERS, is_pid(whereis(?REGISTRY(D)))].
 
 % erl_epmd API
 
@@ -125,12 +129,12 @@ start_link(Name, DistPort, D = Driver) ->
                           [Name, DistPort, Driver], []).
 
 stop(Driver = D) when is_atom(Driver) ->
-    ?FUNCTION_NAME(whereis(?REGISTRY(D)));
+    gen_server:call(?REGISTRY(D), stop, infinity);
 stop(Pid) when is_pid(Pid) ->
     gen_server:call(Pid, stop, infinity).
 
 register_node(Driver = D, Name, Port) when is_atom(Driver) ->
-    ?FUNCTION_NAME(whereis(?REGISTRY(D)), Name, Port, Driver).
+    gen_server:call(?REGISTRY(D), {?FUNCTION_NAME, Name, Port, Driver}, infinity).
 
 -spec register_node(Pid, Name, Port, Driver) -> {ok, CreationId} when
       Pid        :: pid() | atom(),
@@ -158,7 +162,7 @@ port_please(Pid, Node, Host) ->
 %% request port of node `Name`
 %% @end
 port_please(Driver = D, Name, Host, Timeout) when is_atom(Driver) ->
-    port_please(whereis(?REGISTRY(D)), Name, Host, Timeout);
+    gen_server:call(?REGISTRY(D), {?FUNCTION_NAME, Name, Host}, Timeout);
 port_please(Pid, Name, Host, Timeout) when is_pid(Pid) ->
     gen_server:call(Pid, {?FUNCTION_NAME, Name, Host}, Timeout).
 
@@ -194,7 +198,7 @@ names(Host, D) ->
       Pid  :: pid(),
       Info :: [{dist_port, inet:port_number()}].
 get_info(Driver = D) when is_atom(Driver) ->
-    ?FUNCTION_NAME(whereis(?REGISTRY(D)));
+    gen_server:call(?REGISTRY(D), ?FUNCTION_NAME, infinity);
 get_info(Pid) when is_pid(Pid) ->
     gen_server:call(Pid, ?FUNCTION_NAME, infinity).
 
@@ -203,7 +207,7 @@ get_info(Pid) when is_pid(Pid) ->
       Node :: atom(),
       Host :: inet:hostname() | inet:ip_address().
 host_please(Driver = D, Node) when is_atom(Driver) ->
-    ?FUNCTION_NAME(whereis(?REGISTRY(D)), Node);
+    gen_server:call(?REGISTRY(D), {?FUNCTION_NAME, Node}, infinity);
 host_please(Pid, Node) when is_pid(Pid) ->
     gen_server:call(Pid, {?FUNCTION_NAME, Node}, infinity).
 
@@ -253,7 +257,7 @@ local_part(NodeName, D) ->
       Node :: atom(),
       Port :: inet:port_number().
 add_node(Driver = D, Node, Port) when is_atom(Driver) ->
-    ?FUNCTION_NAME(whereis(?REGISTRY(D)), Node, Port);
+    ok = gen_server:cast(?REGISTRY(D), {?FUNCTION_NAME, Node, Port});
 add_node(Pid, Node, Port) when is_pid(Pid) ->
     ok = gen_server:cast(Pid, {?FUNCTION_NAME, Node, Port}).
 
@@ -263,7 +267,7 @@ add_node(Pid, Node, Port) when is_pid(Pid) ->
       Host :: inet:hostname() | inet:ip_address(),
       Port :: inet:port_number().
 add_node(Driver = D, Node, Host, Port) when is_atom(Driver) ->
-    ?FUNCTION_NAME(whereis(?REGISTRY(D)), Node, Host, Port);
+    ok = gen_server:cast(?REGISTRY(D), {?FUNCTION_NAME, Node, Host, Port});
 add_node(Pid, Node, Host, Port) when is_pid(Pid) ->
     ok = gen_server:cast(Pid, {?FUNCTION_NAME, Node, Host, Port}).
 
@@ -271,7 +275,7 @@ add_node(Pid, Node, Host, Port) when is_pid(Pid) ->
       Pid  :: pid() | atom(),
       Node :: atom().
 remove_node(Driver = D, Node) when is_atom(Driver) ->
-    ?FUNCTION_NAME(whereis(?REGISTRY(D)), Node);
+    ok = gen_server:cast(?REGISTRY(D), {?FUNCTION_NAME, Node});
 remove_node(Pid, Node) when is_pid(Pid) ->
     ok = gen_server:cast(Pid, {?FUNCTION_NAME, Node}).
 
@@ -281,7 +285,7 @@ remove_node(Pid, Node) when is_pid(Pid) ->
       Host :: inet:hostname() | inet:ip_address(),
       Port :: inet:port_number().
 list_nodes(Driver = D) when is_atom(Driver) ->
-    ?FUNCTION_NAME(whereis(?REGISTRY(D)));
+    gen_server:call(?REGISTRY(D), ?FUNCTION_NAME, infinity);
 list_nodes(Pid) ->
     gen_server:call(Pid, ?FUNCTION_NAME, infinity).
 
@@ -371,8 +375,8 @@ handle_call({port_please, LocalPart, Host}, _From, State = #state{version = Vers
     {reply, Reply, State};
 
 handle_call(list_nodes, _From, State = #state{driver = D}) ->
-    ResultHost = {{'$3', {{'$4', '$1'}}}},
-    ResultAddr = {{'$3', {{'$5', '$1'}}}},
+    ResultHost = {{'$3', '$4', '$1', D}},
+    ResultAddr = {{'$3', '$5', '$1', D}},
     NodeKey = #node_key{local_part='_', domain='_'},
     MatchSpec = [{?NODE_MATCH(NodeKey), [{'==', undefined, '$5'}], [ResultHost]},
                  {?NODE_MATCH(NodeKey), [{'/=', undefined, '$5'}], [ResultAddr]}],
