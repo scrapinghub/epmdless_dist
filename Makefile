@@ -14,7 +14,7 @@ dep_rewrite_logging = git https://github.com/dmzmk/rewrite_logging 0.1.0
 
 DEPS = jiffy erlang_consul_node_discovery
 dep_jiffy = git git://github.com/davisp/jiffy.git 0.15.2
-dep_erlang_consul_node_discovery = git https://bitbucket.org/scrapinghub/erlang_consul_node_discovery.git 0.2.1
+dep_erlang_consul_node_discovery = git https://bitbucket.org/scrapinghub/erlang_consul_node_discovery.git 0.2.2
 
 TEST_DEPS = meck
 dep_meck  = git git://github.com/eproxus/meck 0.8.12
