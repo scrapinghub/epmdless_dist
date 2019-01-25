@@ -626,7 +626,7 @@ do_remove_node(NodeName, D) when is_atom(NodeName) ->
                            ets:delete(?REG_HOST(D), H);
                        _ -> true
                    end,
-            true = ets:delete(?REG_PART(D), NK#node_key.local_part)
+            ets:delete_object(?REG_PART(D), #map{key = NK#node_key.local_part, value = Domain})
     catch
         error:_ -> ok
     end.
@@ -769,6 +769,7 @@ verify_inet_port() ->
     {ok, Port} = inet:port(Sock),
     Node = #node{host="localhost", port=Port},
     #node{addr={127,0,0,1}} = verify_port(set_address(Node, inet_tcp), inet_tcp),
+    %% If line below fails, ensure you have ipv6 enabled and '::1 localhost' in your /etc/hosts file.
     {{error, econnrefused}, {{0,0,0,0,0,0,0,1}, Port}} = verify_port(set_address(Node, inet6_tcp), inet6_tcp),
     inet_tcp:close(Sock).
 

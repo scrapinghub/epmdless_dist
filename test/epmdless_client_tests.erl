@@ -124,9 +124,7 @@ register_node({_Socks, Nodes, _Pid, {_DistSock, DistPort}}) ->
        ],
        lists:sort(ets:tab2list(epmdless_inet_atoms))),
     ?assertMatch(
-       [{map,{127,0,0,1},localhost},
-        {map,{  _,_,_,_},_testdomain}
-       ],
+       [{map,{127,0,0,1},_localhost}|_],
        lists:sort(ets:tab2list(epmdless_inet_addrs))),
 
     ?assertMatch(
@@ -190,21 +188,32 @@ add_node({_Socks, _Nodes, _Pid, {_DistSock, DistPort}}) ->
     Hostname = epmdless_client:gethostname(inet_tcp),
     NodeName = list_to_atom([$i, $@|Hostname]),
 
+    ok = epmdless_dist:?FUNCTION_NAME('i@localhost', DistPort),
     ok = epmdless_dist:?FUNCTION_NAME(NodeName, DistPort),
     timer:sleep(100),
+    {port, DistPort, 5} = epmdless_dist:port_please(i, localhost),
     {port, DistPort, 5} = epmdless_dist:port_please(i, Hostname),
+    NodeName = epmdless_dist:node_please(i),
     ok = epmdless_dist:remove_node(NodeName),
+    timer:sleep(100),
+    'i@localhost' = epmdless_dist:node_please(i),
+    ok = epmdless_dist:remove_node('i@localhost'),
+    timer:sleep(100),
+    undefined = epmdless_dist:node_please(i),
     noport = epmdless_dist:port_please(i, Hostname),
+    noport = epmdless_dist:port_please(i, localhost),
 
     ok = epmdless_dist:?FUNCTION_NAME(NodeName, Hostname, DistPort),
     timer:sleep(100),
     {port, DistPort, 5} = epmdless_dist:port_please(i, Hostname),
+    NodeName = epmdless_dist:node_please(i),
     ok = epmdless_dist:remove_node(NodeName),
     noport = epmdless_dist:port_please(i, Hostname),
 
     ok = epmdless_dist:?FUNCTION_NAME(i, list_to_atom(Hostname), DistPort),
     timer:sleep(100),
     {port, DistPort, 5} = epmdless_dist:port_please(i, Hostname),
+    NodeName = epmdless_dist:node_please(i),
     ok = epmdless_dist:remove_node(NodeName),
     noport = epmdless_dist:port_please(i, Hostname).
 
