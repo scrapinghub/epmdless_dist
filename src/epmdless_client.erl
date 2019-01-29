@@ -20,7 +20,8 @@
          names/1, names/2]).
 %% auxiliary extensions
 -export([get_info/1, host_please/2,
-         node_please/2, local_part/2,
+         node_please/2, node_please/3,
+         local_part/2,
          driver/1]).
 %% node maintenance functions
 -export([add_node/3, add_node/4,
@@ -33,7 +34,7 @@
          terminate/2,
          code_change/3]).
 %% Utility function
--export([gethostname/1]).
+-export([gethostname/1, last_added/2]).
 
 -define(APP, epmdless_dist).
 
@@ -77,6 +78,10 @@
 
 -export_type([drivers/0]).
 -type drivers() :: 'inet_tcp'|'eless_tcp'|'inet6_tcp'.
+
+-export_type([node_info/0]).
+-type node_info() :: #{name =>    atom(), addr =>   tuple(), port => integer(), added_ts => integer() }
+                   | #{name => undefined, addr => undefined, port => undefined, added_ts => undefined }.
 
 -record(node_key, {
           %% using e-mail terminology: https://www.w3.org/Protocols/rfc822/#z8
@@ -216,25 +221,36 @@ host_please(Pid, Node) when is_pid(Pid) ->
       D :: atom(),
       Node :: atom().
 node_please(LocalPart, D) ->
+    node_please(LocalPart, D, fun last_added/2).
+
+-spec node_please(LocalPart, D, CompareFun) -> Node | undefined when
+      LocalPart :: atom(),
+      D :: atom(),
+      CompareFun :: fun((node_info(), node_info()) -> node_info()),
+      Node :: atom().
+node_please(LocalPart, D, CompareFun) ->
     case ets:member(?REG_ATOM(D), LocalPart) of
         % This means we got a NodeName instead of LocalPart,
         % so we'll just send it back.
         true -> LocalPart;
         false ->
             try
-                case ets:lookup_element(?REG_PART(D), LocalPart, #map.value) of
-                [Domain] ->
-                    ets:lookup_element(?REGISTRY(D),
-                                       #node_key{local_part=LocalPart, domain=Domain},
-                                       #node.name_atom);
-                Domains when is_list(Domains) ->
-                    {_Ts, Node} = lookup_last_added_node(LocalPart, Domains, D),
-                    Node#node.name_atom
-                end
+                Nodes = [ node_info(Node)
+                          || Domain <- ets:lookup_element(?REG_PART(D), LocalPart, #map.value),
+                             Node <- ets:lookup(?REGISTRY(D), #node_key{local_part=LocalPart, domain=Domain}) ],
+                #{name := NodeAtom} = lists:foldl(CompareFun, node_info(#node{}), Nodes),
+                NodeAtom
             catch
                 error:badarg -> undefined
             end
     end.
+
+last_added(This = #{added_ts:=TAdded}, #{added_ts:=undefined}) -> This;
+last_added(This = #{added_ts:=TAdded}, #{added_ts:=OAdded}) when TAdded >= OAdded -> This;
+last_added(_This, Other) -> Other.
+
+node_info(#node{name_atom = NameAtom, addr = Addr, port = Port, added_ts = AddedTs}) ->
+    #{name => NameAtom, addr => Addr, port => Port, added_ts => AddedTs }.
 
 -spec local_part(NodeName, D) -> LocalPart | undefined when
       NodeName :: atom(),
@@ -509,18 +525,6 @@ lookup_port(Pid, LocalPart, Host, S = #state{driver = D}) ->
     lookup_port(Pid, LocalPart, Domain, S).
 
 
-lookup_last_added_node(LocalPart, Domains, D) ->
-    lists:foldl(
-      fun(Domain, {Max, _NodeAtom} = Acc) ->
-              case ets:lookup(?REGISTRY(D), #node_key{local_part=LocalPart, domain=Domain}) of
-                  [#node{added_ts=Ts} = N] when Max < Ts -> {Ts, N};
-                  [#node{}] -> Acc
-              end
-      end,
-      {0, undefined},
-      Domains).
-
-
 insert_config(Filter, S = #state{name=Name, driver = D, port=DistPort}) ->
     Self = tuple_to_node({Name, gethostname(D), DistPort}),
     [
@@ -536,7 +540,7 @@ insert_config(Filter, S = #state{name=Name, driver = D, port=DistPort}) ->
 
 insert_ignore(Node = #node{ key = #node_key{ local_part = ThisNodeLP }, host = ThisHost }, D, ThisNodeLP, ThisHost) ->
     %% To ensure there's only 1 node with the same local_part,
-    %% nodes with the same local-part on different hosts are removed.
+    %% nodes with the same local-part as this one, but on different hosts are removed.
     [ do_remove_node(Other, D)
       || Other <- ets:select(?REGISTRY(D), same_lp_diff_host_ms(ThisNodeLP, ThisHost)) ],
     do_insert_node(Node, D) andalso Node;
@@ -602,31 +606,29 @@ remove_if_unreachable(Node, D) ->
       end).
 
 do_insert_node(Node = #node{ key = NK, addr = Addr, host = Host}, D) ->
+    true = ets:insert(?REGISTRY(D), Node),
     true = ets:insert(?REG_ATOM(D), #map{key=Node#node.name_atom, value=NK}),
     case is_tuple(Addr) of
         true -> true = ets:insert(?REG_ADDR(D), #map{key=Addr, value=NK#node_key.domain});
         _ -> true
     end,
     true = ets:insert(?REG_HOST(D), #map{key=Host, value=NK#node_key.domain}),
-    true = ets:insert(?REG_PART(D), #map{key=NK#node_key.local_part, value=NK#node_key.domain}),
-    true = ets:insert(?REGISTRY(D), Node).
+    true = ets:insert(?REG_PART(D), #map{key=NK#node_key.local_part, value=NK#node_key.domain}).
 
 do_remove_node(NodeName, D) when is_atom(NodeName) ->
     try
         [#map{value = NodeKey}] = ets:take(?REG_ATOM(D), NodeName),
+        ets:delete_object(?REG_PART(D), #map{key = NodeKey#node_key.local_part,
+                                             value = NodeKey#node_key.domain}),
         [#node{addr = Addr, host = Host}] = ets:take(?REGISTRY(D), NodeKey),
-        {NodeKey, Addr, Host}
-    of
-        {NK = #node_key{domain = Domain}, A, H} ->
-            true = case names(Domain, D) of
-                       % Only delete the address and host mapping
-                       % if there're no other nodes with the same domain.
-                       [] ->
-                           ets:delete(?REG_ADDR(D), A),
-                           ets:delete(?REG_HOST(D), H);
-                       _ -> true
-                   end,
-            ets:delete_object(?REG_PART(D), #map{key = NK#node_key.local_part, value = Domain})
+        case names(NodeKey#node_key.domain, D) of
+            % Only delete the address and host mapping
+            % if there're no other nodes with the same domain.
+            [] ->
+                true = ets:delete(?REG_ADDR(D), Addr),
+                true = ets:delete(?REG_HOST(D), Host);
+            _ -> true
+        end
     catch
         error:_ -> ok
     end.
