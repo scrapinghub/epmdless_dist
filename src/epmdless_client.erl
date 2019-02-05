@@ -1,11 +1,7 @@
 -module(epmdless_client).
 -behaviour(gen_server).
 
-
 -include_lib("stdlib/include/ms_transform.hrl").
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
 
 
 %% @doc
@@ -183,7 +179,11 @@ names(undefined, D) ->
 names(Domain, D) when is_atom(Domain) ->
     NodeKey = #node_key{local_part='_', domain=Domain},
     MatchSpec = [{?NODE_MATCH(NodeKey), [], ['$3']}],
-    ets:select(?REGISTRY(D), MatchSpec);
+    try
+        ets:select(?REGISTRY(D), MatchSpec)
+    catch
+        error:badarg -> []
+    end;
 names(Addr, D) when is_tuple(Addr) ->
     try
         names(ets:lookup_element(?REG_ADDR(D), Addr, #map.value), D)
@@ -229,23 +229,23 @@ node_please(LocalPart, D) ->
       CompareFun :: fun((node_info(), node_info()) -> node_info()),
       Node :: atom().
 node_please(LocalPart, D, CompareFun) ->
-    case ets:member(?REG_ATOM(D), LocalPart) of
-        % This means we got a NodeName instead of LocalPart,
-        % so we'll just send it back.
-        true -> LocalPart;
-        false ->
-            try
+    try
+        case ets:member(?REG_ATOM(D), LocalPart) of
+            % This means we got a NodeName instead of LocalPart,
+            % so we'll just send it back.
+            true -> LocalPart;
+            false ->
                 Nodes = [ node_info(Node)
                           || Domain <- ets:lookup_element(?REG_PART(D), LocalPart, #map.value),
                              Node <- ets:lookup(?REGISTRY(D), #node_key{local_part=LocalPart, domain=Domain}) ],
                 #{name := NodeAtom} = lists:foldl(CompareFun, node_info(#node{}), Nodes),
                 NodeAtom
-            catch
-                error:badarg -> undefined
-            end
+        end
+    catch
+        error:badarg -> undefined
     end.
 
-last_added(This = #{added_ts:=TAdded}, #{added_ts:=undefined}) -> This;
+last_added(This, #{added_ts:=undefined}) -> This;
 last_added(This = #{added_ts:=TAdded}, #{added_ts:=OAdded}) when TAdded >= OAdded -> This;
 last_added(_This, Other) -> Other.
 
@@ -257,9 +257,11 @@ node_info(#node{name_atom = NameAtom, addr = Addr, port = Port, added_ts = Added
       D :: atom(),
       LocalPart :: atom().
 local_part(NodeName, D) ->
-    case ets:lookup(?REG_ATOM(D), NodeName) of
-        [#map{value=NK}] -> NK#node_key.local_part;
-        [] ->
+    try
+        NK = ets:lookup_element(?REG_ATOM(D), NodeName, #map.value),
+        NK#node_key.local_part
+    catch
+        error:badarg ->
             case string_to_tuple(atom_to_list(NodeName)) of
                 {_, undefined, undefined} -> undefined;
                 {LP, _, _} -> list_to_atom(LP)
@@ -762,6 +764,8 @@ gethostname(Driver) ->
     end.
 
 -ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
 verify_port_test_() ->
     [fun verify_inet_port/0,
      fun verify_inet6_port/0].
