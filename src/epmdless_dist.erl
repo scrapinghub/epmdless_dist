@@ -63,7 +63,9 @@ port_please(Name, Host, Timeout) ->
          end,
          fun(noport) -> false;
             (_) -> true
-         end).
+         end,
+         epmdless_dist_sup:called_children(),
+         []).
 
 port_please(Driver, Name, Host, Timeout) ->
     epmdless_client:?FUNCTION_NAME(Driver, Name, Host, Timeout).
@@ -103,7 +105,9 @@ host_please(Node) ->
          end,
          fun(nohost) -> false;
             (_) -> true
-         end).
+         end,
+         epmdless_dist_sup:called_children(),
+         []).
 
 -spec node_please(LocalPart) -> Node | undefined when
       LocalPart :: atom(),

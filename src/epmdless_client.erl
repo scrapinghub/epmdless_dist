@@ -8,7 +8,7 @@
 %% Module which used as a callback which passed to erlang vm via `-epmd_module` attribute
 %% @end
 
--export([child_spec/0, children/0]).
+-export([child_spec/0, children/1, protos/0, is_alive/1, is_caller/1]).
 %% erl_epmd callbacks
 -export([start/3, start_link/3, stop/1,
          register_node/3, register_node/4,
@@ -32,9 +32,17 @@
 %% Utility function
 -export([gethostname/1, last_added/2]).
 
--define(APP, epmdless_dist).
 
--define(DRIVERS, [inet_tcp, eless_tcp, inet6_tcp]).
+-ifdef(OTP_RELEASE). %% this implies 21 or higher
+-define(EXCEPTION(Class, Reason, Stacktrace), Class:Reason:Stacktrace).
+-define(GET_STACK(Stacktrace), Stacktrace).
+-else.
+-define(EXCEPTION(Class, Reason, _), Class:Reason).
+-define(GET_STACK(_), erlang:get_stacktrace()).
+-endif.
+
+
+-define(APP, epmdless_dist).
 
 -define(REGISTRY(D), case D of inet_tcp  -> epmdless_inet;
                                eless_tcp -> epmdless_eless;
@@ -117,8 +125,51 @@ child_spec() ->
       type => worker,
       modules => [?MODULE]}.
 
-children() ->
-    [D || D <- ?DRIVERS, is_pid(whereis(?REGISTRY(D)))].
+children(Filter) when is_function(Filter, 1) ->
+    filter_children(Filter, ?MODULE:protos(), []).
+
+protos() ->
+    case init:get_argument(proto_dist) of
+        {ok, [Protos]} -> Protos;
+        _ -> ["inet_tcp"]
+    end.
+
+is_alive(undefined) -> false;
+is_alive(Driver) when is_atom(Driver) ->
+    is_alive(whereis(?REGISTRY(Driver)));
+is_alive(Proto) when is_list(Proto) ->
+    is_alive(to_driver(Proto));
+is_alive(Pid) ->
+    is_pid(Pid).
+
+is_caller(Proto) when is_atom(Proto) ->
+    is_caller(atom_to_list(Proto));
+is_caller(Proto) ->
+    Mod = list_to_atom(Proto ++ "_dist"),
+    CallStack = callers_stack(),
+    lists:keymember(Mod, 1, CallStack).
+
+callers_stack() ->
+    try exit(fail)
+    catch ?EXCEPTION(exit, fail, Stacktrace) ->
+              ?GET_STACK(Stacktrace)
+    end.
+
+%% NOTE: The result is in reverse order of the Input list.
+%% This is intentional, so that the logic is consistent with net_kernel:
+%% The last protocol in the -proto_dist list is the first one to be connected to.
+filter_children(_, [], Acc) -> Acc;
+filter_children(IsAlive, [D |Rest], Acc) ->
+    filter_children(IsAlive, Rest, stash_if(IsAlive(D), to_driver(D), Acc)).
+
+stash_if(true, Item, Acc) -> [Item|Acc];
+stash_if(_, _, Acc) -> Acc.
+
+to_driver(D) when is_atom(D) -> D;
+to_driver("inet_tls") -> inet_tcp;
+to_driver("epmdless_tcp") -> inet_tcp;
+to_driver("epmdless_tls") -> eless_tcp;
+to_driver(D) when is_list(D) -> list_to_atom(D).
 
 % erl_epmd API
 
@@ -322,7 +373,7 @@ init([Name, DistPort, Driver = D]) ->
     ets:new(?REG_ADDR(D), ?ETS_OPTS(set, #map.key)),
     ets:new(?REG_HOST(D), ?ETS_OPTS(set, #map.key)),
     ets:new(?REG_PART(D), ?ETS_OPTS(bag, #map.key)),
-    error_logger:info_msg("Starting erlang distribution at port ~p~n", [DistPort]),
+    error_logger:info_msg("Starting erlang ~p distribution at port ~p~n", [Driver, DistPort]),
     self() ! timeout,
     State = #state{creation = rand:uniform(3), name=Name, port=DistPort, driver=Driver},
     % Do not add configuration in init, because the name or address resolution

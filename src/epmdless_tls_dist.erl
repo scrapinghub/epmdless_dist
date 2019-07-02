@@ -28,6 +28,11 @@
 -export([gen_listen/2, gen_accept/2, gen_accept_connection/6,
 	 gen_setup/6, gen_select/2]).
 
+-ifdef(TEST).
+-export([port_please/1, port_please/2,
+         host_please/1, epmd_children/1]).
+-endif.
+
 -include_lib("kernel/include/net_address.hrl").
 -include_lib("kernel/include/dist.hrl").
 -include_lib("kernel/include/dist_util.hrl").
@@ -52,7 +57,7 @@ gen_select(Driver, Node) ->
             end;
 		_ -> false
 	    end;
-	_ -> 
+	_ ->
 	    false
     end.
 
@@ -87,7 +92,7 @@ setup(Node, Type, MyNode, LongOrShortNames,SetupTime) ->
 gen_setup(Driver, Node, Type, MyNode, LongOrShortNames,SetupTime) ->
     Kernel = self(),
     spawn_opt(fun() -> do_setup(Driver, Kernel, Node, Type, MyNode, LongOrShortNames, SetupTime) end, [link, {priority, max}]).
-		   
+		
 do_setup(Driver, Kernel, Node, Type, MyNode, LongOrShortNames, SetupTime) ->
     [Name, RawAddress] = splitnode(Driver, Node, LongOrShortNames),
     ErlEpmd = net_kernel:epmd_module(),
@@ -100,22 +105,22 @@ do_setup(Driver, Kernel, Node, Type, MyNode, LongOrShortNames, SetupTime) ->
             Timer = dist_util:start_timer(SetupTime),
             case ErlEpmd:port_please(Name, RawAddress) of
                 {port, TcpPort, Version} ->
-                    ?trace("port_please(~p) -> version ~p~n", 
+                    ?trace("port_please(~p) -> version ~p~n",
                            [Node,Version]),
                     dist_util:reset_timer(Timer),
                     case epmdless_tls_dist_proxy:connect(Driver, Ip, TcpPort) of
                         {ok, Socket} ->
                             error_logger:info_msg("Connected to ~p~n", [{Ip, TcpPort}]),
-                            HSData = connect_hs_data(Kernel, Node, MyNode, Socket, 
+                            HSData = connect_hs_data(Kernel, Node, MyNode, Socket,
                                                      Timer, Version, Ip, TcpPort, RawAddress,
                                                      Type),
                             dist_util:handshake_we_started(HSData);
                         Other ->
                             error_logger:error_msg("Failed to connect to ~p with ~p~n", [{Ip, TcpPort}, Other]),
-                            %% Other Node may have closed since 
+                            %% Other Node may have closed since
                             %% port_please !
                             ?trace("other node (~p) "
-                                   "closed since port_please.~n", 
+                                   "closed since port_please.~n",
                                    [Node]),
                             ?shutdown2(Node, {shutdown, {connect_failed, Other}})
                     end;
@@ -183,18 +188,18 @@ check_node(Driver, Name, Node, Host, LongOrShortNames) ->
 	    [Name, Host]
     end.
 
-split_node([Chr|T], Chr, Ack) -> 
+split_node([Chr|T], Chr, Ack) ->
     [lists:reverse(Ack)|split_node(T, Chr, [])];
-split_node([H|T], Chr, Ack) -> 
+split_node([H|T], Chr, Ack) ->
     split_node(T, Chr, [H|Ack]);
-split_node([], _, Ack) -> 
+split_node([], _, Ack) ->
     [lists:reverse(Ack)].
 
 connect_hs_data(Kernel, Node, MyNode, Socket, Timer, Version, Ip, TcpPort, Address, Type) ->
-    common_hs_data(Kernel, MyNode, Socket, Timer, 
+    common_hs_data(Kernel, MyNode, Socket, Timer,
 		   #hs_data{other_node = Node,
 			    other_version = Version,
-			    f_address = 
+			    f_address =
 				fun(_,_) ->
 					#net_address{address = {Ip,TcpPort},
 						     host = Address,
@@ -217,31 +222,31 @@ common_hs_data(Kernel, MyNode, Socket, Timer, HsData) ->
       socket = Socket,
       timer = Timer,
       this_flags = 0,
-      f_send = 
-	  fun(S,D) -> 
-		  gen_tcp:send(S,D) 
+      f_send =
+	  fun(S,D) ->
+		  gen_tcp:send(S,D)
 	  end,
-      f_recv = 
-	  fun(S,N,T) -> 
-		  gen_tcp:recv(S,N,T) 
+      f_recv =
+	  fun(S,N,T) ->
+		  gen_tcp:recv(S,N,T)
 	  end,
-      f_setopts_pre_nodeup = 
+      f_setopts_pre_nodeup =
 	  fun(S) ->
 		  inet:setopts(S, [{active, false}, {packet, 4}])
 	  end,
-		   f_setopts_post_nodeup = 
-	  fun(S) -> 
+		   f_setopts_post_nodeup =
+	  fun(S) ->
 		  inet:setopts(S, [{deliver, port},{active, true}])
 	  end,
-      f_getll = 
-	  fun(S) -> 
-		  inet:getll(S) 
+      f_getll =
+	  fun(S) ->
+		  inet:getll(S)
 	  end,
-      mf_tick = 
-	  fun(S) -> 
+      mf_tick =
+	  fun(S) ->
 		  gen_tcp:send(S, <<>>)
 	  end,
-      mf_getstat = 
+      mf_getstat =
 	  fun(S) ->
 		  {ok, Stats} = inet:getstat(S, [recv_cnt, send_cnt, send_pend]),
 		  R = proplists:get_value(recv_cnt, Stats, 0),
@@ -257,3 +262,22 @@ get_remote_id(Socket, _Node) ->
 	{error, _Reason} ->
 	    ?shutdown(no_node)
     end.
+
+-ifdef(TEST).
+port_please(Name) ->
+    R = epmdless_dist:?FUNCTION_NAME(Name),
+    spawn(fun()->ok end), %% produce side effect to force addition to stack-trace.
+    R.
+port_please(Name, Address) ->
+    R = epmdless_dist:?FUNCTION_NAME(Name, Address),
+    spawn(fun()->ok end), %% produce side effect to force addition to stack-trace.
+    R.
+host_please(Name) ->
+    R = epmdless_dist:?FUNCTION_NAME(Name),
+    spawn(fun()->ok end), %% produce side effect to force addition to stack-trace.
+    R.
+epmd_children(F) ->
+    R = epmdless_dist_sup:F(),
+    spawn(fun()->ok end), %% produce side effect to force addition to stack-trace.
+    R.
+-endif.

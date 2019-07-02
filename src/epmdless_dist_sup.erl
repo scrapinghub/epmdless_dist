@@ -4,7 +4,9 @@
 
 -export([start_link/0, init/1, stop/0]).
 -export([start_child/3, map_children/1]).
--export([first_succcessful_or_last_failed_child/2]).
+-export([first_succcessful_or_last_failed_child/2,
+         first_succcessful_or_last_failed_child/4]).
+-export([children/0, called_children/0]).
 
 
 start_link() ->
@@ -26,6 +28,8 @@ map_children(Map) ->
 first_succcessful_or_last_failed_child(Fun, IsSuccessFul) ->
     first_succcessful_or_last_failed_child(Fun, IsSuccessFul, children(), []).
 
+first_succcessful_or_last_failed_child(_Fun, _IsSuccessFul, [], []) ->
+    no_children;
 first_succcessful_or_last_failed_child(_Fun, _IsSuccessFul, [], Failures) ->
     hd(Failures);
 first_succcessful_or_last_failed_child(Fun, IsSuccessFul, [Child|Rest], Failures) ->
@@ -35,12 +39,22 @@ first_succcessful_or_last_failed_child(Fun, IsSuccessFul, [Child|Rest], Failures
         _ -> first_succcessful_or_last_failed_child(Fun, IsSuccessFul, Rest, [Applied|Failures])
     end.
 
-children() ->
+children() -> filter_children(fun epmdless_client:is_alive/1).
+
+called_children() ->
+    filter_children(fun(Child) ->
+                            epmdless_client:is_alive(Child)
+                            andalso
+                            epmdless_client:is_caller(Child)
+                    end).
+
+filter_children(Filter) ->
     case is_pid(whereis(epmdless_alt_0)) of
         true ->
             [ Child || {undefined, Child, worker, [epmdless_client]}
-               <- supervisor:which_children(?MODULE), is_pid(Child) ];
+               <- supervisor:which_children(?MODULE), Filter(Child) ];
         false ->
-            epmdless_client:children()
+            epmdless_client:children(Filter)
     end.
+
 

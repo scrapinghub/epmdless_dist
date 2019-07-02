@@ -5,26 +5,30 @@
 epmdless_test_() ->
     {setup,
      fun() ->
-        Hostname = list_to_atom(epmdless_client:gethostname(inet_tcp)),
+        meck:new(epmdless_client, [passthrough]),
+        meck:expect(epmdless_client, protos,
+                    fun() -> ["inet_tcp", "epmdless_tls"] end),
+        Hostname = list_to_atom(epmdless_client:gethostname(eless_tcp)),
         ?debugVal(Hostname),
         SocksNodes = [ {Sock, {list_to_atom([LP]), Dom, Port}}
                        || Dom <- [localhost, Hostname],
                           LP <- lists:seq($a,$d),
-                          {ok, Sock} <- [inet_tcp:listen(0, [])],
+                          {ok, Sock} <- [eless_tcp:listen(0, [])],
                           {ok, Port} <- [inet:port(Sock)] ],
         {Socks, Nodes} = lists:unzip(SocksNodes),
         ?debugVal(Nodes),
         application:set_env(epmdless_dist, node_list, Nodes),
         {ok, Pid} = epmdless_dist:start_link(),
-        {ok, DistSock} = inet_tcp:listen(0, []),
+        {ok, DistSock} = eless_tcp:listen(0, []),
         {ok, DistPort} = inet:port(DistSock),
         {Socks, Nodes, Pid, {DistSock, DistPort}}
      end,
      fun({Socks, _Ports, Pid, {DistSock, _DistPort}}) ->
-        lists:foreach(fun inet_tcp:close/1, Socks),
-        inet_tcp:close(DistSock),
+        lists:foreach(fun eless_tcp:close/1, Socks),
+        eless_tcp:close(DistSock),
         true = unlink(Pid),
-        ok = gen_server:stop(Pid)
+        ok = gen_server:stop(Pid),
+        meck:unload()
      end,
      {with,
        [
@@ -52,26 +56,30 @@ abstract_add_remove() ->
         ?assertEqual(ok, apply(epmdless_dist, add_node, PortArgs++[Port])),
         timer:sleep(100),
         %?debugVal({PortArgs, Port}),
-        ?assertEqual({port, Port, 5}, apply(epmdless_dist, port_please, PortArgs)),
+        ?assertEqual({port, Port, 5}, apply(epmdless_tls_dist, port_please, PortArgs)),
         ?assertEqual(ok, apply(epmdless_dist, remove_node, [RemArgs])),
-        ?assertEqual(noport, apply(epmdless_dist, port_please, PortArgs))
+        ?assertEqual(noport, apply(epmdless_tls_dist, port_please, PortArgs))
         end
     end.
 
 add_remove_test_() ->
     {foreachx,
      fun(_Args) ->
+        meck:new(epmdless_client, [passthrough]),
+        meck:expect(epmdless_client, protos,
+                    fun() -> ["inet_tcp", "epmdless_tls"] end),
         {ok, Pid} = epmdless_dist:start_link(),
-        {ok, DistSock} = inet_tcp:listen(0, []),
+        {ok, DistSock} = eless_tcp:listen(0, []),
         {ok, DistPort} = inet:port(DistSock),
-        {ok, _} = epmdless_dist:register_node(test_node, DistPort, inet_tcp),
+        {ok, _} = epmdless_dist:register_node(test_node, DistPort, eless_tcp),
         {Pid, {DistSock, DistPort}}
      end,
      fun(_Args, {Pid, {DistSock, _}}) ->
-        inet_tcp:close(DistSock),
+        eless_tcp:close(DistSock),
         true = unlink(Pid),
         ok = gen_server:stop(Pid),
-        exit(Pid, kill)
+        exit(Pid, kill),
+        meck:unload()
      end,
      [{['i@127.0.0.1',  'i@127.0.0.1'],              abstract_add_remove()},
       {['i@127.0.0.1',  'i@127.0.0.1', {127,0,0,1}], abstract_add_remove()},
@@ -89,14 +97,14 @@ register_node({_Socks, Nodes, _Pid, {_DistSock, DistPort}}) ->
     %dbg:tracer(), dbg:p(all,c),
     %dbg:tpl(epmdless_client, insert_ignore, [{'_',[],[{return_trace}]}]),
     %dbg:tpl(ets, match_object, [{'_',[],[{return_trace}]}]),
-    {ok, _} = epmdless_dist:?FUNCTION_NAME(test_node, DistPort, inet_tcp),
+    {ok, _} = epmdless_dist:?FUNCTION_NAME(test_node, DistPort, eless_tcp),
     timer:sleep(1000),
     %dbg:stop_clear(),
     PA = get_port(a, localhost, Nodes),
     PB = get_port(b, localhost, Nodes),
     PC = get_port(c, localhost, Nodes),
     PD = get_port(d, localhost, Nodes),
-    Hostname = epmdless_client:gethostname(inet_tcp),
+    Hostname = epmdless_client:gethostname(eless_tcp),
     HostAtom = list_to_atom(Hostname),
     PAH = get_port(a, HostAtom, Nodes),
     PBH = get_port(b, HostAtom, Nodes),
@@ -113,7 +121,7 @@ register_node({_Socks, Nodes, _Pid, {_DistSock, DistPort}}) ->
         {node,{node_key,d,localhost},'d@localhost',{127,0,0,1},"localhost",PD,_},
         {node,{node_key,test_node,_testdomain}, _testname, _testip, _testhost, DistPort, _}
        ],
-       lists:sort(ets:tab2list(epmdless_inet))),
+       lists:sort(ets:tab2list(epmdless_eless))),
 
     ?assertMatch(
        [{map,_aname,{node_key,a,_adomain}},{map,'a@localhost',{node_key,a,localhost}},
@@ -122,16 +130,16 @@ register_node({_Socks, Nodes, _Pid, {_DistSock, DistPort}}) ->
         {map,_dname,{node_key,d,_ddomain}},{map,'d@localhost',{node_key,d,localhost}},
         {map,_testname,{node_key,test_node,_testdomain}}
        ],
-       lists:sort(ets:tab2list(epmdless_inet_atoms))),
+       lists:sort(ets:tab2list(epmdless_eless_atoms))),
     ?assertMatch(
        [{map,{127,0,0,1},_localhost}|_],
-       lists:sort(ets:tab2list(epmdless_inet_addrs))),
+       lists:sort(ets:tab2list(epmdless_eless_addrs))),
 
     ?assertMatch(
        [{map,Hostname,HostAtom},
         {map,"localhost",localhost}
        ],
-       lists:sort(ets:tab2list(epmdless_inet_hosts))),
+       lists:sort(ets:tab2list(epmdless_eless_hosts))),
 
     ?assertMatch(
        [{map,a,HostAtom},{map,a,localhost},
@@ -139,7 +147,7 @@ register_node({_Socks, Nodes, _Pid, {_DistSock, DistPort}}) ->
         {map,c,HostAtom},{map,c,localhost},
         {map,d,HostAtom},{map,d,localhost},
         {map,test_node,_testdomain}],
-       lists:sort(ets:tab2list(epmdless_inet_parts))).
+       lists:sort(ets:tab2list(epmdless_eless_parts))).
 
 get_info({_Socks, _Nodes, _Pid, {_DistSock, DistPort}}) ->
     [{dist_port, DistPort}] = epmdless_dist:?FUNCTION_NAME().
@@ -148,7 +156,7 @@ node_please(_) ->
     %% should return undefined
     undefined = epmdless_dist:?FUNCTION_NAME(non_existent),
     %% should return the last added
-    Hostname = epmdless_client:gethostname(inet_tcp),
+    Hostname = epmdless_client:gethostname(eless_tcp),
     NodeName = list_to_atom([$a, $@|Hostname]),
     NodeName = epmdless_dist:?FUNCTION_NAME(a).
 
@@ -159,40 +167,40 @@ local_part(_) ->
     a = epmdless_dist:?FUNCTION_NAME('a@localhost').
 
 host_please(_) ->
-    nohost = epmdless_dist:?FUNCTION_NAME('not@exists'),
-    Hostname = epmdless_client:gethostname(inet_tcp),
+    nohost = epmdless_tls_dist:?FUNCTION_NAME('not@exists'),
+    Hostname = epmdless_client:gethostname(eless_tcp),
     NodeName = list_to_atom([$a, $@|Hostname]),
-    {host, {_,_,_,_}} = epmdless_dist:?FUNCTION_NAME(NodeName).
+    {host, {_,_,_,_}} = epmdless_tls_dist:?FUNCTION_NAME(NodeName).
 
 port_please({_Socks, Nodes, _Pid, {_DistSock, _DistPort}}) ->
-    noport = epmdless_dist:?FUNCTION_NAME('not', 'exists'),
-    noport = epmdless_dist:?FUNCTION_NAME('not@exists', 'exists'),
+    noport = epmdless_tls_dist:?FUNCTION_NAME('not', 'exists'),
+    noport = epmdless_tls_dist:?FUNCTION_NAME('not@exists', 'exists'),
     [ begin
           LPStr = atom_to_list(LP),
           HostStr = atom_to_list(Host),
           NodeStr = LPStr++[$@|HostStr],
           NodeAtom = list_to_atom(NodeStr),
           {ok, IP} = inet:getaddr(HostStr, inet),
-          ?assertEqual({port, P, 5}, epmdless_dist:?FUNCTION_NAME(LP, Host)),
-          ?assertEqual({port, P, 5}, epmdless_dist:?FUNCTION_NAME(LP, IP)),
-          ?assertEqual({port, P, 5}, epmdless_dist:?FUNCTION_NAME(LPStr, Host)),
-          ?assertEqual({port, P, 5}, epmdless_dist:?FUNCTION_NAME(LPStr, IP)),
-          ?assertEqual({port, P, 5}, epmdless_dist:?FUNCTION_NAME(NodeAtom, Host)),
-          ?assertEqual({port, P, 5}, epmdless_dist:?FUNCTION_NAME(NodeAtom, IP)),
-          ?assertEqual({port, P, 5}, epmdless_dist:?FUNCTION_NAME(NodeStr, Host)),
-          ?assertEqual({port, P, 5}, epmdless_dist:?FUNCTION_NAME(NodeStr, IP))
+          ?assertEqual({port, P, 5}, epmdless_tls_dist:?FUNCTION_NAME(LP, Host)),
+          ?assertEqual({port, P, 5}, epmdless_tls_dist:?FUNCTION_NAME(LP, IP)),
+          ?assertEqual({port, P, 5}, epmdless_tls_dist:?FUNCTION_NAME(LPStr, Host)),
+          ?assertEqual({port, P, 5}, epmdless_tls_dist:?FUNCTION_NAME(LPStr, IP)),
+          ?assertEqual({port, P, 5}, epmdless_tls_dist:?FUNCTION_NAME(NodeAtom, Host)),
+          ?assertEqual({port, P, 5}, epmdless_tls_dist:?FUNCTION_NAME(NodeAtom, IP)),
+          ?assertEqual({port, P, 5}, epmdless_tls_dist:?FUNCTION_NAME(NodeStr, Host)),
+          ?assertEqual({port, P, 5}, epmdless_tls_dist:?FUNCTION_NAME(NodeStr, IP))
       end || {LP, Host, P} <- Nodes, Host =/= localhost ].
 
 add_node({_Socks, _Nodes, _Pid, {_DistSock, DistPort}}) ->
     %% Tests with hostname
-    Hostname = epmdless_client:gethostname(inet_tcp),
+    Hostname = epmdless_client:gethostname(eless_tcp),
     NodeName = list_to_atom([$i, $@|Hostname]),
 
     ok = epmdless_dist:?FUNCTION_NAME('i@localhost', DistPort),
     ok = epmdless_dist:?FUNCTION_NAME(NodeName, DistPort),
     timer:sleep(100),
-    {port, DistPort, 5} = epmdless_dist:port_please(i, localhost),
-    {port, DistPort, 5} = epmdless_dist:port_please(i, Hostname),
+    {port, DistPort, 5} = epmdless_tls_dist:port_please(i, localhost),
+    {port, DistPort, 5} = epmdless_tls_dist:port_please(i, Hostname),
     NodeName = epmdless_dist:node_please(i),
     ok = epmdless_dist:remove_node(NodeName),
     timer:sleep(100),
@@ -200,38 +208,38 @@ add_node({_Socks, _Nodes, _Pid, {_DistSock, DistPort}}) ->
     ok = epmdless_dist:remove_node('i@localhost'),
     timer:sleep(100),
     undefined = epmdless_dist:node_please(i),
-    noport = epmdless_dist:port_please(i, Hostname),
-    noport = epmdless_dist:port_please(i, localhost),
+    noport = epmdless_tls_dist:port_please(i, Hostname),
+    noport = epmdless_tls_dist:port_please(i, localhost),
 
     ok = epmdless_dist:?FUNCTION_NAME(NodeName, Hostname, DistPort),
     timer:sleep(100),
-    {port, DistPort, 5} = epmdless_dist:port_please(i, Hostname),
+    {port, DistPort, 5} = epmdless_tls_dist:port_please(i, Hostname),
     NodeName = epmdless_dist:node_please(i),
     ok = epmdless_dist:remove_node(NodeName),
-    noport = epmdless_dist:port_please(i, Hostname),
+    noport = epmdless_tls_dist:port_please(i, Hostname),
 
     ok = epmdless_dist:?FUNCTION_NAME(i, list_to_atom(Hostname), DistPort),
     timer:sleep(100),
-    {port, DistPort, 5} = epmdless_dist:port_please(i, Hostname),
+    {port, DistPort, 5} = epmdless_tls_dist:port_please(i, Hostname),
     NodeName = epmdless_dist:node_please(i),
     ok = epmdless_dist:remove_node(NodeName),
-    noport = epmdless_dist:port_please(i, Hostname).
+    noport = epmdless_tls_dist:port_please(i, Hostname).
 
 remove_node({_Socks, _Nodes, _Pid, {_DistSock, _DistPort}}) ->
     ok = epmdless_dist:?FUNCTION_NAME('not@exists'),
-    Hostname = epmdless_client:gethostname(inet_tcp),
+    Hostname = epmdless_client:gethostname(eless_tcp),
     HostAtom = list_to_atom(Hostname),
     NodeStr = [$a, $@|Hostname],
     NodeName = list_to_atom(NodeStr),
 
-    {port, Port, 5} = epmdless_dist:port_please(a, HostAtom),
+    {port, Port, 5} = epmdless_tls_dist:port_please(a, HostAtom),
     ok = epmdless_dist:?FUNCTION_NAME(NodeName),
-    noport = epmdless_dist:port_please(a, HostAtom),
+    noport = epmdless_tls_dist:port_please(a, HostAtom),
     epmdless_dist:add_node(a, HostAtom, Port),
     timer:sleep(100),
-    {port, Port, 5} = epmdless_dist:port_please(a, HostAtom),
+    {port, Port, 5} = epmdless_tls_dist:port_please(a, HostAtom),
     ok = epmdless_dist:?FUNCTION_NAME(NodeStr),
-    noport = epmdless_dist:port_please(a, Hostname),
+    noport = epmdless_tls_dist:port_please(a, Hostname),
     epmdless_dist:add_node(a, HostAtom, Port),
     timer:sleep(100).
 
@@ -240,21 +248,21 @@ list_nodes({_Socks, Nodes, _Pid, {_DistSock, DistPort}}) ->
     PB = get_port(b, localhost, Nodes),
     PC = get_port(c, localhost, Nodes),
     PD = get_port(d, localhost, Nodes),
-    Hostname = list_to_atom(epmdless_client:gethostname(inet_tcp)),
+    Hostname = list_to_atom(epmdless_client:gethostname(eless_tcp)),
     PAH = get_port(a, Hostname, Nodes),
     PBH = get_port(b, Hostname, Nodes),
     PCH = get_port(c, Hostname, Nodes),
     PDH = get_port(d, Hostname, Nodes),
     ?assertMatch(
-    [{_ahostnode,_ahostip,PAH,inet_tcp},{'a@localhost',{127,0,0,1},PA,inet_tcp},
-     {_bhostnode,_bhostip,PBH,inet_tcp},{'b@localhost',{127,0,0,1},PB,inet_tcp},
-     {_chostnode,_chostip,PCH,inet_tcp},{'c@localhost',{127,0,0,1},PC,inet_tcp},
-     {_dhostnode,_dhostip,PDH,inet_tcp},{'d@localhost',{127,0,0,1},PD,inet_tcp},
-     {_testname,_testip,DistPort,inet_tcp}],
+    [{_ahostnode,_ahostip,PAH,eless_tcp},{'a@localhost',{127,0,0,1},PA,eless_tcp},
+     {_bhostnode,_bhostip,PBH,eless_tcp},{'b@localhost',{127,0,0,1},PB,eless_tcp},
+     {_chostnode,_chostip,PCH,eless_tcp},{'c@localhost',{127,0,0,1},PC,eless_tcp},
+     {_dhostnode,_dhostip,PDH,eless_tcp},{'d@localhost',{127,0,0,1},PD,eless_tcp},
+     {_testname,_testip,DistPort,eless_tcp}],
     lists:sort(epmdless_dist:?FUNCTION_NAME())).
 
 names({_Socks, Nodes, _Pid, {_DistSock, DistPort}}) ->
-    Hostname = epmdless_client:gethostname(inet_tcp),
+    Hostname = epmdless_client:gethostname(eless_tcp),
     HostAtom = list_to_atom(Hostname),
     {ok, IP} = inet:getaddr(Hostname, inet),
     TestNodes = [ list_to_atom(atom_to_list(LP)++[$@|atom_to_list(Host)])
@@ -267,84 +275,88 @@ names({_Socks, Nodes, _Pid, {_DistSock, DistPort}}) ->
 
 re_add_host(_) ->
     %% Tests with hostname
-    Hostname = epmdless_client:gethostname(inet_tcp),
+    Hostname = epmdless_client:gethostname(eless_tcp),
     NodeName1 = list_to_atom([$i, $@|Hostname]),
     NodeName2 = list_to_atom([$i, $@|"localhost"]),
-    {ok, Sock} = inet_tcp:listen(0, []),
+    {ok, Sock} = eless_tcp:listen(0, []),
     {ok, Port} = inet:port(Sock),
 
     ok = epmdless_dist:add_node(NodeName1, Port),
     timer:sleep(100),
     NodeName1 = epmdless_dist:node_please(i),
-    {port, Port, 5} = epmdless_dist:port_please(i, Hostname),
+    {port, Port, 5} = epmdless_tls_dist:port_please(i, Hostname),
 
     ok = epmdless_dist:add_node(NodeName2, Port),
     timer:sleep(100),
     NodeName2 = epmdless_dist:node_please(i),
-    {port, Port, 5} = epmdless_dist:port_please(i, "localhost"),
+    {port, Port, 5} = epmdless_tls_dist:port_please(i, "localhost"),
 
     ok = epmdless_dist:add_node(NodeName1, Port),
     timer:sleep(100),
     NodeName2 = epmdless_dist:node_please(i),
-    {port, Port, 5} = epmdless_dist:port_please(i, Hostname).
+    {port, Port, 5} = epmdless_tls_dist:port_please(i, Hostname).
 
 local_part_same_as_local({_Socks, _Nodes, _Pid, {_DistSock, DistPort}}) ->
-    Hostname = epmdless_client:gethostname(inet_tcp),
+    Hostname = epmdless_client:gethostname(eless_tcp),
     LocalNode = list_to_atom("test_node"++[$@|Hostname]),
     LocalNode = epmdless_dist:node_please(test_node),
-    {port, DistPort, 5} = epmdless_dist:port_please(LocalNode),
+    {port, DistPort, 5} = epmdless_tls_dist:port_please(LocalNode),
 
-    {ok, Sock} = inet_tcp:listen(0, []),
+    {ok, Sock} = eless_tcp:listen(0, []),
     {ok, Port} = inet:port(Sock),
     % dbg:tracer(), dbg:p(all,c),
     % dbg:tpl(epmdless_client, insert_ignore, [{'_',[],[{return_trace}]}]),
     % dbg:tpl(ets, match_object, [{'_',[],[{return_trace}]}]),
     ok = epmdless_dist:add_node('test_node@localhost', Port),
     timer:sleep(100),
-    noport = epmdless_dist:port_please(test_node, "localhost"),
+    noport = epmdless_tls_dist:port_please(test_node, "localhost"),
     % dbg:stop_clear(),
     LocalNode = epmdless_dist:node_please(test_node).
 
 local_part_same_as_local_pre_register_test_() ->
     {setup,
      fun() ->
+        meck:new(epmdless_client, [passthrough]),
+        meck:expect(epmdless_client, protos,
+                    fun() -> ["inet_tcp", "epmdless_tls"] end),
         application:set_env(epmdless_dist, node_list, []),
         {ok, Pid} = epmdless_dist:start_link(),
-        {ok, Sock} = inet_tcp:listen(0, []),
+        {ok, Sock} = eless_tcp:listen(0, []),
         {ok, Port} = inet:port(Sock),
-        {ok, DistSock} = inet_tcp:listen(0, []),
+        {ok, DistSock} = eless_tcp:listen(0, []),
         {ok, DistPort} = inet:port(DistSock),
         {{Sock, Port}, Pid, {DistSock, DistPort}}
      end,
      fun({{Sock, _Port}, Pid, {DistSock, _DistPort}}) ->
-        inet_tcp:close(Sock),
-        inet_tcp:close(DistSock),
+        eless_tcp:close(Sock),
+        eless_tcp:close(DistSock),
         true = unlink(Pid),
-        ok = gen_server:stop(Pid)
+        ok = gen_server:stop(Pid),
+        meck:unload()
      end,
      {with, [fun local_part_same_as_local_pre_register/1]}
      }.
 
 local_part_same_as_local_pre_register({{_Sock, Port}, _Pid, {_DistSock, DistPort}}) ->
-    Hostname = epmdless_client:gethostname(inet_tcp),
+    Hostname = epmdless_client:gethostname(eless_tcp),
     LocalNode = list_to_atom("test_node"++[$@|Hostname]),
     ?debugVal(node()),
-    {ok, _} = epmdless_dist_sup:start_child(test_node, DistPort, inet_tcp),
+    {ok, _} = epmdless_dist_sup:start_child(test_node, DistPort, eless_tcp),
     ok = epmdless_dist:add_node('test_node@localhost', Port),
     ['test_node@localhost'] =
     lists:usort([N || _ <- lists:seq(1,5000),
                       N <- [epmdless_dist:node_please(test_node)],
                       N =/= undefined]),
-    {port, Port, 5} = epmdless_dist:port_please(test_node, "localhost"),
-    {ok, _} = epmdless_dist:register_node(test_node, DistPort, inet_tcp),
+    {port, Port, 5} = epmdless_tls_dist:port_please(test_node, "localhost"),
+    {ok, _} = epmdless_dist:register_node(test_node, DistPort, eless_tcp),
 
     [LocalNode| _] =
     lists:usort([N || _ <- lists:seq(1,5000),
                       N <- [epmdless_dist:node_please(test_node)],
                       N =/= undefined]),
     LocalNode = epmdless_dist:node_please(test_node),
-    noport = epmdless_dist:port_please(test_node, "localhost"),
-    {port, DistPort, 5} = epmdless_dist:port_please(epmdless_dist:node_please(test_node)),
+    noport = epmdless_tls_dist:port_please(test_node, "localhost"),
+    {port, DistPort, 5} = epmdless_tls_dist:port_please(epmdless_dist:node_please(test_node)),
     ok.
 
 
