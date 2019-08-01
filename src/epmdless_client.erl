@@ -280,29 +280,33 @@ node_please(LocalPart, D) ->
       CompareFun :: fun((node_info(), node_info()) -> node_info()),
       Node :: atom().
 node_please(LocalPart, D, CompareFun) ->
+    node_please(LocalPart, D, CompareFun, 2#111). % 3 attempts
+
+node_please(LocalPart, D, CompareFun, 0) -> undefined;
+node_please(LocalPart, D, CompareFun, Attempts) ->
     try
         case ets:member(?REG_ATOM(D), LocalPart) of
             % This means we got a NodeName instead of LocalPart,
             % so we'll just send it back.
             true -> LocalPart;
             false ->
-                Nodes =
-                case ets:lookup(?REG_PART(D), LocalPart) of
-                    [] ->
-                        gen_server:call(?REGISTRY(D), {init_config, LocalPart}, infinity);
-                    Parts when is_list(Parts) ->
-                        [ Node || #map{value = Domain} <- Parts,
-                                  Node <- ets:lookup(?REGISTRY(D),
-                                                     #node_key{local_part=LocalPart,
-                                                               domain=Domain}) ]
-                end,
-                #{name := NodeAtom} = lists:foldl(CompareFun,
-                                                  node_info(#node{}),
-                                                  [node_info(N) || N <- Nodes]),
-                NodeAtom
+                maps:get(
+                  name,
+                  lists:foldl(
+                    CompareFun,
+                    node_info(#node{}),
+                    [ node_info(Node)
+                      || Domain <- ets:lookup_element(?REG_PART(D), LocalPart,
+                                                      #map.value),
+                         Node <- ets:lookup(?REGISTRY(D),
+                                            #node_key{local_part=LocalPart,
+                                                      domain=Domain}) ]))
         end
     catch
-        error:badarg -> undefined
+        error:badarg ->
+            gen_server:cast(?REGISTRY(D), {add_from_config, LocalPart}),
+            timer:sleep(3),
+            node_please(LocalPart, D, CompareFun, Attempts bsr 1)
     end.
 
 last_added(This, #{added_ts:=undefined}) -> This;
@@ -389,8 +393,7 @@ init([Name, DistPort, Driver = D]) ->
     % can block the startup sequence of the node.
     {ok, State}.
 
-handle_call({init_config, LocalPart}, _From, State) ->
-    {reply, insert_config(fun(LP) -> LP == LocalPart end, State), State};
+
 handle_call({register_node, Name, DistPort, Driver}, From, State) when is_binary(DistPort) ->
     handle_call({register_node, Name, binary_to_list(DistPort), Driver}, From, State);
 handle_call({register_node, Name, DistPort, Driver}, From, State) when is_list(DistPort) ->
@@ -404,13 +407,13 @@ handle_call({register_node, Name, DistPort, Driver}, _From, State = #state{creat
     Node = atom_to_node(Name, HostState#state.host),
     try
         case lookup_port(self(), Name, HostState#state.host, HostState) of
-        DistPort ->
-            {noreply, NewState1} =
-            handle_info(Node#node{port = DistPort}, HostState),
-            {reply, {ok, Creation}, NewState1};
-        Port when Port /= DistPort ->
-            Reply = {error, duplicate_name},
-            {reply, Reply, HostState}
+            DistPort ->
+                {noreply, NewState1} =
+                handle_info(Node#node{port = DistPort}, HostState),
+                {reply, {ok, Creation}, NewState1};
+            Port when Port /= DistPort ->
+                Reply = {error, duplicate_name},
+                {reply, Reply, HostState}
         end
     catch
         error:badarg ->
@@ -484,6 +487,10 @@ handle_call(driver, _From, State) ->
 handle_call(Msg, _From, State) ->
     error_logger:error_msg("Unexpected message: ~p~n", [Msg]),
     {reply, {error, {bad_msg, Msg}}, State}.
+
+handle_cast({add_from_config, LocalPart}, State) ->
+    insert_config(LocalPart, State),
+    {noreply, State};
 
 handle_cast({add_node, NodeName, Port}, State) when is_atom(NodeName) ->
     Node = atom_to_node(NodeName),
@@ -569,10 +576,8 @@ lookup_port(Pid, LocalPart, Addr, S = #state{driver = D}) when is_tuple(Addr) ->
         lookup_port(Pid, LocalPart, Domain, S)
     catch
         error:badarg ->
-            case [N || N = #node{addr = A} <- insert_config(
-                                                fun(LP) -> LP == LocalPart end,
-                                                S),
-                       A == Addr] of
+            HasAddr = fun(#node{addr = A}) -> A == Addr; (_) -> false end,
+            case insert_config(LocalPart, S, HasAddr) of
                 [#node{port=Port}] -> Port;
                 [] -> error(badarg);
                 %% It's an error to have multiple node definitions
@@ -589,17 +594,19 @@ lookup_port(Pid, LocalPart, Host, S = #state{driver = D}) ->
     lookup_port(Pid, LocalPart, Domain, S).
 
 
-insert_config(Filter, S = #state{name=Name, driver = D, port=DistPort}) ->
-    [
-     begin
-          handle_cast({insert, Verification}, S),
-          Verification
-      end
-      || Node = #node{key = #node_key{local_part = LP}} <- node_list(),
-         Filter(LP),
+insert_config(LocalPart, State) ->
+    insert_config(LocalPart, State, fun(V) -> is_record(V, node) end).
+
+insert_config(LocalPart, S = #state{name=Name, driver = D, port=DistPort}, IsValid) ->
+    Self = tuple_to_node({Name, gethostname(D), DistPort}),
+    [ Verification
+      || Node = #node{key = #node_key{local_part = LP}} <- [Self|node_list()],
+         LP == LocalPart,
          not ets:member(?REG_PART(D), LP),
-         Verification <- [verify_port(set_address(Node, D), D)]
-    ].
+         Verification <- [verify_port(set_address(Node, D), D)],
+         {noreply, S} == handle_cast({insert, Verification}, S),
+         IsValid(Verification) ].
+
 
 insert_ignore(Node = #node{ key = #node_key{ local_part = ThisNodeLP }, host = ThisHost }, D, ThisNodeLP, ThisHost) ->
     %% To ensure there's only 1 node with the same local_part,
