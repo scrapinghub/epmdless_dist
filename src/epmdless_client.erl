@@ -286,10 +286,19 @@ node_please(LocalPart, D, CompareFun) ->
             % so we'll just send it back.
             true -> LocalPart;
             false ->
-                Nodes = [ node_info(Node)
-                          || Domain <- ets:lookup_element(?REG_PART(D), LocalPart, #map.value),
-                             Node <- ets:lookup(?REGISTRY(D), #node_key{local_part=LocalPart, domain=Domain}) ],
-                #{name := NodeAtom} = lists:foldl(CompareFun, node_info(#node{}), Nodes),
+                Nodes =
+                case ets:lookup(?REG_PART(D), LocalPart) of
+                    [] ->
+                        gen_server:call(?REGISTRY(D), {init_config, LocalPart}, infinity);
+                    Parts when is_list(Parts) ->
+                        [ Node || #map{value = Domain} <- Parts,
+                                  Node <- ets:lookup(?REGISTRY(D),
+                                                     #node_key{local_part=LocalPart,
+                                                               domain=Domain}) ]
+                end,
+                #{name := NodeAtom} = lists:foldl(CompareFun,
+                                                  node_info(#node{}),
+                                                  [node_info(N) || N <- Nodes]),
                 NodeAtom
         end
     catch
@@ -380,6 +389,8 @@ init([Name, DistPort, Driver = D]) ->
     % can block the startup sequence of the node.
     {ok, State}.
 
+handle_call({init_config, LocalPart}, _From, State) ->
+    {reply, insert_config(fun(LP) -> LP == LocalPart end, State), State};
 handle_call({register_node, Name, DistPort, Driver}, From, State) when is_binary(DistPort) ->
     handle_call({register_node, Name, binary_to_list(DistPort), Driver}, From, State);
 handle_call({register_node, Name, DistPort, Driver}, From, State) when is_list(DistPort) ->
@@ -579,13 +590,12 @@ lookup_port(Pid, LocalPart, Host, S = #state{driver = D}) ->
 
 
 insert_config(Filter, S = #state{name=Name, driver = D, port=DistPort}) ->
-    Self = tuple_to_node({Name, gethostname(D), DistPort}),
     [
      begin
           handle_cast({insert, Verification}, S),
           Verification
       end
-      || Node = #node{key = #node_key{local_part = LP}} <- [Self|node_list()],
+      || Node = #node{key = #node_key{local_part = LP}} <- node_list(),
          Filter(LP),
          not ets:member(?REG_PART(D), LP),
          Verification <- [verify_port(set_address(Node, D), D)]
