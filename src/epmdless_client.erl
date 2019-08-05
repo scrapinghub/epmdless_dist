@@ -282,7 +282,7 @@ node_please(LocalPart, D) ->
 node_please(LocalPart, D, CompareFun) ->
     node_please(LocalPart, D, CompareFun, 2#111). % 3 attempts
 
-node_please(LocalPart, D, CompareFun, 0) -> undefined;
+node_please(_LocalPart, _D, _CompareFun, 0) -> undefined;
 node_please(LocalPart, D, CompareFun, Attempts) ->
     try
         case ets:member(?REG_ATOM(D), LocalPart) of

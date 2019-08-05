@@ -2,11 +2,8 @@ PROJECT = epmdless_dist
 PROJECT_DESCRIPTION = A key-value store (ETS) based Erlang Port Mapper Daemon replacement.
 PROJECT_VERSION = $(shell git describe --abbrev=0 --tags)
 
-DEVEL_HOST ?= 127.0.0.1
-DEVEL_NODENAME ?= epmdless
-PORT_7113 ?= 7113
-PORT_7114 ?= 7114
-SSL_DIST_OPTFILE ?= config/ssl_dist.config
+.DEFAULT_GOAL=all
+
 
 ERLC_OPTS = +'{parse_transform, rewrite_logging}'
 
@@ -14,10 +11,15 @@ BUILD_DEPS = rewrite_logging
 dep_rewrite_logging = git https://github.com/dmzmk/rewrite_logging 0.1.0
 
 DEPS = erlang_consul_node_discovery
-dep_erlang_consul_node_discovery = git https://bitbucket.org/scrapinghub/erlang_consul_node_discovery.git 0.2.2
+dep_erlang_consul_node_discovery = git https://bitbucket.org/scrapinghub/erlang_consul_node_discovery.git 0.2.3
 
 TEST_DEPS = meck jiffy
 
+devel: DEVEL_HOST ?= 127.0.0.1
+devel: DEVEL_NODENAME ?= epmdless
+devel: PORT_7113 ?= 7113
+devel: PORT_7114 ?= 7114
+devel: SSL_DIST_OPTFILE ?= config/ssl_dist.config
 devel: all
 	# Order of proto_dist module is significant:
 	# inet_tcp will use the smaller port number,
