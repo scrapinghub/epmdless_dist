@@ -290,17 +290,19 @@ node_please(LocalPart, D, CompareFun, Attempts) ->
             % so we'll just send it back.
             true -> LocalPart;
             false ->
-                maps:get(
-                  name,
-                  lists:foldl(
-                    CompareFun,
-                    node_info(#node{}),
-                    [ node_info(Node)
-                      || Domain <- ets:lookup_element(?REG_PART(D), LocalPart,
-                                                      #map.value),
-                         Node <- ets:lookup(?REGISTRY(D),
-                                            #node_key{local_part=LocalPart,
-                                                      domain=Domain}) ]))
+                NodesInfo =
+                [ node_info(Node)
+                  || Domain <- ets:lookup_element(?REG_PART(D), LocalPart,
+                                                  #map.value),
+                     Node <- ets:lookup(?REGISTRY(D),
+                                        #node_key{local_part=LocalPart,
+                                                  domain=Domain}) ],
+                case NodesInfo of
+                    [] -> undefined;
+                    [#{name := Name}] -> Name;
+                    [First | Rest] ->
+                        maps:get(name, lists:foldl(CompareFun, First, Rest))
+                end
         end
     catch
         error:badarg ->
