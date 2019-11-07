@@ -618,6 +618,7 @@ insert_ignore(Node = #node{ key = #node_key{ local_part = ThisNodeLP }, host = T
     do_insert_node(Node, D) andalso Node;
 insert_ignore(Node = #node{ key = NK }, D, ThisNodeLP, ThisHost) ->
     SameLPEntries = ets:match_object(?REGISTRY(D), #node{key = NK#node_key{domain='_'}, _ = '_'}),
+    cleanup_stale_nodes(SameLPEntries, D),
     % Current entry is only inserted if non of the already existing records prompt to ignore it.
     case lists:all(fun(Other) -> is_diff_node_with_same_lp(Node, Other, D, ThisNodeLP, ThisHost) end, SameLPEntries) of
         true ->
@@ -625,6 +626,9 @@ insert_ignore(Node = #node{ key = NK }, D, ThisNodeLP, ThisHost) ->
             do_insert_node(Node, D) andalso Node;
         false -> false
     end.
+
+cleanup_stale_nodes(Nodes, D) ->
+  lists:foreach(fun(Node) -> remove_if_unreachable(Node, D) end, Nodes).
 
 is_diff_node_with_same_lp(Node = #node{ key = NK, addr = Addr, host = Host, port = Port }, Other, D, ThisNodeLP, _ThisHost) ->
     case Other of
