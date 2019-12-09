@@ -1,0 +1,10 @@
+{application, epmdless_dist, [
+    {description, "A key-value store (ETS) based Erlang Port Mapper Daemon replacement."},
+    {vsn, "0.1.0"},
+    {registered,[]},
+    {applications, [
+        kernel,
+        stdlib
+    ]},
+    {modules, []}
+]}.
