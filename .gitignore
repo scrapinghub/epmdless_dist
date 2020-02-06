@@ -1,6 +1,7 @@
 *.beam
 *.swp
 *.swo
+*.plt
 ebin/
 epmdless_dist.d
 certs
