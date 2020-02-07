@@ -48,6 +48,8 @@ list_nodes({_, _, [DistPort, NodePort]}) ->
     [_] = lists:usort([N || _ <- lists:seq(1,5000),
                             N <- [epmdless_dist:node_please('test-node')],
                             N =/= undefined]),
+    {ok, _} = epmdless_dist:register_node(test_node, DistPort, inet_tcp),
+    timer:sleep(500),
     ?assertMatch(
        [{'test-node@localhost',{127,0,0,1},NodePort,inet_tcp},
         {_testnode,_testip,DistPort,inet_tcp}],
