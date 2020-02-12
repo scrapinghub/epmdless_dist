@@ -4,14 +4,8 @@ PROJECT_VERSION = $(shell git describe --abbrev=0 --tags)
 
 .DEFAULT_GOAL=all
 
-
-ERLC_OPTS = +'{parse_transform, rewrite_logging}'
-
-BUILD_DEPS = rewrite_logging
-dep_rewrite_logging = git https://github.com/dmzmk/rewrite_logging 0.1.0
-
 DEPS = erlang_consul_node_discovery
-dep_erlang_consul_node_discovery = git https://bitbucket.org/scrapinghub/erlang_consul_node_discovery.git 0.2.3
+dep_erlang_consul_node_discovery = git https://github.com/scrapinghub/erlang_consul_node_discovery.git 0.2.5
 
 TEST_DEPS = meck jiffy
 
@@ -34,5 +28,6 @@ devel: all
 		-ssl_dist_optfile ${SSL_DIST_OPTFILE} \
 		-name ${DEVEL_NODENAME}@${DEVEL_HOST}
 
-
+PLT_APPS = ssl
+DIALYZER_OPTS = -Werror_handling -Wrace_conditions -Wno_match
 include erlang.mk

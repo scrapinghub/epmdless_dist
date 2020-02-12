@@ -90,17 +90,17 @@
 -record(node_key, {
           %% using e-mail terminology: https://www.w3.org/Protocols/rfc822/#z8
           %% addr-spec   =  local-part "@" domain        ; global address
-          local_part :: atom(),
-          domain :: atom()
+          local_part :: atom() | string(),
+          domain :: atom() | string()
          }).
 
 -record(node, {
-          key :: #node_key{},
-          name_atom :: atom(), %% formatted full node name as an atom
-          addr :: inet:ip_address(),
-          host :: inet:hostname(),
-          port :: inet:port_number(),
-          added_ts :: integer()
+          key       :: undefined | #node_key{},
+          name_atom :: '_' |'$3' | atom(), %% formatted full node name as an atom
+          addr      :: undefined | '_' |'$5' | inet:ip_address(),
+          host      :: '_' |'$4' | inet:hostname(),
+          port      :: '_' |'$1' | inet:port_number(),
+          added_ts  :: undefined | '_' | integer()
          }).
 
 -record(map, {
@@ -113,7 +113,7 @@
     name   :: atom(),
     port   :: inet:port_number(),
     driver :: atom(),
-    host   :: string(),
+    host   :: undefined | string(),
     version = 5
 }).
 
@@ -803,8 +803,6 @@ verify_port(Error, _) -> Error.
 get_os_env(App, EnvKey) ->
     get_os_env(join_list($_, [App, EnvKey])).
 
-get_os_env(EnvKeyAtom) when is_atom(EnvKeyAtom) ->
-    get_os_env(atom_to_list(EnvKeyAtom));
 get_os_env(EnvKeyString) when is_list(EnvKeyString) ->
     String = os:getenv(string:to_upper(EnvKeyString), "[]."),
     {ok, Tokens, _} = erl_scan:string(String),
@@ -819,19 +817,16 @@ join_list(Char, [Head|Tail]) ->
 
 gethostname(Driver) ->
     % Crawlera specific environment vars
-    case os:getenv("HOST", os:getenv("HOSTNAME")) of
-        false ->
-            {UDP,[]} = inet:udp_module([Driver:family()]),
-            case UDP:open(0,[]) of
-                {ok,U} ->
-                    {ok,Res} = inet:gethostname(U),
-                    UDP:close(U),
-                    Res;
-                _ ->
-                    "nohost.nodomain"
-            end;
-        Host -> Host
-    end.
+    {UDP,[]} = inet:udp_module([Driver:family()]),
+    Default = case UDP:open(0,[]) of
+        {ok,U} ->
+            {ok,Res} = inet:gethostname(U),
+            UDP:close(U),
+            Res;
+        _ ->
+            "nohost.nodomain"
+    end,
+    os:getenv("HOST", os:getenv("HOSTNAME", Default)).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").

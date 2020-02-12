@@ -22,11 +22,11 @@ getserv(NamePort) -> inet_tcp:getserv(NamePort).
 
 %% inet_tcp address lookup
 getaddr(Address) -> inet_tcp:getaddr(Address).
-getaddr(Address, Timer) -> inet_tcp:getaddr_tm(Address, Timer).
+getaddr(Address, Timer) -> inet_tcp:getaddr(Address, Timer).
 
 %% inet_tcp address lookup
 getaddrs(Address) -> inet_tcp:getaddrs(Address).
-getaddrs(Address, Timer) -> inet_tcp:getaddrs_tm(Address, Timer).
+getaddrs(Address, Timer) -> inet_tcp:getaddrs(Address, Timer).
 
 %% inet_udp special this side addresses
 translate_ip(IP) -> inet_tcp:translate_ip(IP).
