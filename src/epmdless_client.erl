@@ -316,7 +316,7 @@ last_added(This = #{added_ts:=TAdded}, #{added_ts:=OAdded}) when TAdded >= OAdde
 last_added(_This, Other) -> Other.
 
 node_info(#node{name_atom = NameAtom, addr = Addr, port = Port, added_ts = AddedTs}) ->
-    #{name => NameAtom, addr => Addr, port => Port, added_ts => AddedTs }.
+    #{name => NameAtom, addr => Addr, port => Port, added_ts => AddedTs}.
 
 -spec local_part(NodeName, D) -> LocalPart | undefined when
       NodeName :: atom(),
@@ -405,24 +405,12 @@ handle_call({register_node, Name, DistPort, Driver}, From, State) when is_binary
 handle_call({register_node, Name, DistPort, Driver}, From, State) when is_list(Name) ->
     handle_call({register_node, list_to_atom(Name), DistPort, Driver}, From, State);
 handle_call({register_node, Name, DistPort, Driver}, _From, State = #state{creation = Creation, driver = Driver}) ->
+    % gethostname is a blocking call, can block the node start,
+    % hence done here instead of in init/1.
     HostState = State#state{host = gethostname(Driver)},
     Node = atom_to_node(Name, HostState#state.host),
-    try
-        case lookup_port(self(), Name, HostState#state.host, HostState) of
-            DistPort ->
-                {noreply, NewState1} =
-                handle_info(Node#node{port = DistPort}, HostState),
-                {reply, {ok, Creation}, NewState1};
-            Port when Port /= DistPort ->
-                Reply = {error, duplicate_name},
-                {reply, Reply, HostState}
-        end
-    catch
-        error:badarg ->
-            {noreply, NewState2} =
-            handle_info(Node#node{port = DistPort}, HostState),
-            {reply, {ok, Creation}, NewState2}
-    end;
+    {noreply, NewState2} = handle_info(Node#node{port = DistPort}, HostState),
+    {reply, {ok, Creation}, NewState2};
 
 handle_call(get_info, _From, State = #state{port = DistPort}) ->
     {reply, [{dist_port, DistPort}], State};
@@ -604,18 +592,11 @@ insert_config(LocalPart, S = #state{name=Name, driver = D, port=DistPort}, IsVal
     [ Verification
       || Node = #node{key = #node_key{local_part = LP}} <- [Self|node_list()],
          LP == LocalPart,
-         not ets:member(?REG_PART(D), LP),
          Verification <- [verify_port(set_address(Node, D), D)],
          {noreply, S} == handle_cast({insert, Verification}, S),
          IsValid(Verification) ].
 
 
-insert_ignore(Node = #node{ key = #node_key{ local_part = ThisNodeLP }, host = ThisHost }, D, ThisNodeLP, ThisHost) ->
-    %% To ensure there's only 1 node with the same local_part,
-    %% nodes with the same local-part as this one, but on different hosts are removed.
-    [ do_remove_node(Other, D)
-      || Other <- ets:select(?REGISTRY(D), same_lp_diff_host_ms(ThisNodeLP, ThisHost)) ],
-    do_insert_node(Node, D) andalso Node;
 insert_ignore(Node = #node{ key = NK }, D, ThisNodeLP, ThisHost) ->
     SameLPEntries = ets:match_object(?REGISTRY(D), #node{key = NK#node_key{domain='_'}, _ = '_'}),
     % Current entry is only inserted if non of the already existing records prompt to ignore it.
@@ -628,15 +609,13 @@ insert_ignore(Node = #node{ key = NK }, D, ThisNodeLP, ThisHost) ->
 
 is_diff_node_with_same_lp(Node = #node{ key = NK, addr = Addr, host = Host, port = Port }, Other, D, ThisNodeLP, _ThisHost) ->
     case Other of
-        % never override the node itself by other nodes on external hosts
-        #node{key = #node_key{local_part = LP}} when LP == ThisNodeLP -> false;
         % Ignore if Address, Host and Port match,
         % implies that local_part, domain and name_atom are the same.
         #node{addr = Addr, host = Host, port = Port} -> false;
-        % Update Port and Address if at least Host match,
-        % implies that local_part, domain and name_atom are the same.
-        #node{addr = Addr1, host = Host} when Addr == undefined orelse
-                                              Addr == Addr1 ->
+        % Update Port and Address, if Address in not-yet set, if Host match.
+        % It is Implied that local_part, domain and name_atom are the same.
+        #node{host = Host} when Addr == undefined orelse
+                                Addr == Other#node.addr ->
             true = ets:insert(?REGISTRY(D), Node),
             false;
         % Update Address and Host regardless if Port matches or not.
@@ -651,14 +630,6 @@ is_diff_node_with_same_lp(Node = #node{ key = NK, addr = Addr, host = Host, port
                                    [N, Node, D, ThisNodeLP, _ThisHost]),
             true
     end.
-
-same_lp_diff_host_ms(ThisNodeLP, ThisHost) ->
-    ets:fun2ms(fun(N = #node{ key = #node_key{ local_part = LP },
-                              host = Host })
-                     when LP =:= ThisNodeLP andalso
-                          Host =/= ThisHost ->
-                       N#node.name_atom
-               end).
 
 remove_if_unreachable(Node, D) ->
     Pid = self(),

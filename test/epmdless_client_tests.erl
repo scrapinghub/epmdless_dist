@@ -309,9 +309,10 @@ local_part_same_as_local({_Socks, _Nodes, _Pid, {_DistSock, DistPort}}) ->
     % dbg:tpl(ets, match_object, [{'_',[],[{return_trace}]}]),
     ok = epmdless_dist:add_node('test_node@localhost', Port),
     timer:sleep(100),
-    noport = epmdless_tls_dist:port_please(test_node, "localhost"),
+    {port, Port, 5} = epmdless_tls_dist:port_please(test_node, "localhost"),
     % dbg:stop_clear(),
-    LocalNode = epmdless_dist:node_please(test_node).
+    LocalNode = epmdless_client:node_please(test_node, eless_tcp, fun(_A,B) -> B end),
+    'test_node@localhost' = epmdless_dist:node_please(test_node).
 
 local_part_same_as_local_pre_register_test_() ->
     {setup,
@@ -347,7 +348,7 @@ local_part_same_as_local_pre_register({{_Sock, Port}, _Pid, {_DistSock, DistPort
     lists:usort([N || _ <- lists:seq(1,5000),
                       N <- [epmdless_dist:node_please(test_node)],
                       N =/= undefined]),
-    noport = epmdless_tls_dist:port_please(test_node, "localhost"),
+    {port, Port, 5} = epmdless_tls_dist:port_please(test_node, "localhost"),
     {ok, _} = epmdless_dist:register_node(test_node, DistPort, eless_tcp),
 
     [LocalNode| _] =
@@ -355,7 +356,7 @@ local_part_same_as_local_pre_register({{_Sock, Port}, _Pid, {_DistSock, DistPort
                       N <- [epmdless_dist:node_please(test_node)],
                       N =/= undefined]),
     LocalNode = epmdless_dist:node_please(test_node),
-    noport = epmdless_tls_dist:port_please(test_node, "localhost"),
+    {port, Port, 5} = epmdless_tls_dist:port_please(test_node, "localhost"),
     {port, DistPort, 5} = epmdless_tls_dist:port_please(epmdless_dist:node_please(test_node)),
     ok.
 
