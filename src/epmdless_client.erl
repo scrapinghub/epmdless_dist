@@ -30,7 +30,7 @@
          terminate/2,
          code_change/3]).
 %% Utility function
--export([gethostname/1, last_added/2]).
+-export([gethostname/1, last_added/2, first_added/2]).
 
 
 -ifdef(OTP_RELEASE). %% this implies 21 or higher
@@ -314,6 +314,10 @@ node_please(LocalPart, D, CompareFun, Attempts) ->
 last_added(This, #{added_ts:=undefined}) -> This;
 last_added(This = #{added_ts:=TAdded}, #{added_ts:=OAdded}) when TAdded >= OAdded -> This;
 last_added(_This, Other) -> Other.
+
+first_added(This, #{added_ts:=undefined}) -> This;
+first_added(This = #{added_ts:=TAdded}, #{added_ts:=OAdded}) when TAdded < OAdded -> This;
+first_added(_This, Other) -> Other.
 
 node_info(#node{name_atom = NameAtom, addr = Addr, port = Port, added_ts = AddedTs}) ->
     #{name => NameAtom, addr => Addr, port => Port, added_ts => AddedTs}.
