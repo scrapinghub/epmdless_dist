@@ -5,7 +5,7 @@ PROJECT_VERSION = $(shell git describe --abbrev=0 --tags)
 .DEFAULT_GOAL=all
 
 DEPS = erlang_consul_node_discovery
-dep_erlang_consul_node_discovery = git https://github.com/scrapinghub/erlang_consul_node_discovery.git a0ac2a0
+dep_erlang_consul_node_discovery = git https://github.com/scrapinghub/erlang_consul_node_discovery.git 70ef85c
 
 TEST_DEPS = meck jiffy
 
